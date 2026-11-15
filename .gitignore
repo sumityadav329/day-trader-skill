@@ -32,3 +32,6 @@ trader/
 # Testing and coverage
 .pytest_cache/
 .coverage
+
+# per-repo gh account (direnv)
+.envrc
