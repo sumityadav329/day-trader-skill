@@ -754,6 +754,23 @@ def setup_name(res, cs="$"):
     return "close above %s%.2f" % (cs, res["level"]) if res["level"] is not None else "close above a level"
 
 
+def closed_note(day_text, market):
+    """'' on a trading day, else why the market is shut. NSE calendar comes from trader-alerts (sibling folder)."""
+    if market != "IN":
+        return ""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "trader_alerts", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                          "trader-alerts", "alerts.py"))
+        al = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(al)
+        ok, why = al.trading_day(datetime.date.fromisoformat(str(day_text)[:10]), "IN")
+        return "" if ok else "NSE/BSE is closed on %s (%s): any bars below are from an earlier session." % (day_text, why)
+    except Exception:
+        return ""
+
+
 def describe(res):
     """Plain lines for a person."""
     when = datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S")
@@ -767,6 +784,9 @@ def describe(res):
     if res.get("data_time") and res["data_time"] <= res["now"] and res["data_time"][:10] == res["date"]:
         head += ", data to %s" % res["data_time"][11:]
     out = [head]
+    closed = closed_note(res.get("date"), res.get("market"))
+    if closed:
+        out.append(closed)
     orr = res.get("opening_range")
     if orr:
         start = datetime.datetime.strptime(res["opens"], "%H:%M")

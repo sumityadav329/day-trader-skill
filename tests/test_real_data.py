@@ -117,11 +117,27 @@ class Presets(unittest.TestCase):
             scan.live_fno_symbols = orig
         self.assertIn("incomplete", err.getvalue())
 
-    def test_nifty500_warns_it_is_only_100(self):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertEqual(len(scan.preset_list("nifty500")), 100)
-        self.assertIn("not the full Nifty 500", err.getvalue())
+    def test_nifty500_fallback_warns_it_is_only_100(self):
+        orig, err = scan.live_index_symbols, io.StringIO()
+        scan.live_index_symbols = lambda n: None
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(len(scan.preset_list("nifty500")), 100)
+        finally:
+            scan.live_index_symbols = orig
+        self.assertIn("NOT the full", err.getvalue())
+
+    def test_index_csv_parsed_from_nse_format(self):
+        import tempfile
+        # first rows of NSE's real ind_nifty500list.csv
+        csv_text = ("Company Name,Industry,Symbol,Series,ISIN Code\n"
+                    "360 ONE WAM Ltd.,Financial Services,360ONE,EQ,INE466L01038\n"
+                    "ABB India Ltd.,Capital Goods,ABB,EQ,INE117A01022\n")
+        with tempfile.TemporaryDirectory() as d:
+            with open(_os.path.join(d, "ind_nifty500list.csv"), "w", encoding="utf-8") as fh:
+                fh.write(csv_text)
+            self.assertEqual(scan.live_index_symbols("nifty500", cache_dir=d),
+                             [("360ONE.NS", "360 ONE WAM Ltd."), ("ABB.NS", "ABB India Ltd.")])
 
 
 class StopAndProtection(unittest.TestCase):
@@ -232,3 +248,26 @@ class NetOfCostsAndBand(unittest.TestCase):
             s = size.size_trade(self._plan(1328.9, 1344.3), self.CFG, today="2026-11-13")
         o = size.bracket_order(s)
         self.assertEqual((o["lower_circuit"], o["upper_circuit"]), (1205.8, 1473.6))
+
+
+facts = load("trader-analyst", "facts")
+
+
+class RemainingGaps(unittest.TestCase):
+    def test_nse_deals_csv_is_parsed(self):
+        # NSE's download header; values are synthetic placeholders
+        csv_text = ("Date,Symbol,Security Name,Client Name,Buy/Sell,Quantity Traded,Trade Price / Wght. Avg. Price,Remarks\n"
+                    "13-NOV-2026,ABC,ABC Ltd,Some Fund,BUY,\"1,50,000\",250.50,-\n")
+        rows = ptr.parse_indian_deals(csv_text)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["symbol"], rows[0]["quantity"], rows[0]["price"], rows[0]["date"], rows[0]["type"]),
+                         ("ABC.NS", 150000, 250.5, "2026-11-13", "purchase"))
+
+    def test_garbage_is_not_parsed_as_deals(self):
+        self.assertEqual(ptr.parse_indian_deals("not a deals file"), [])
+
+    def test_entry_notes_nse_holiday_and_weekend(self):
+        self.assertIn("Diwali", entry.closed_note("2026-11-10", "IN"))
+        self.assertIn("weekend", entry.closed_note("2026-11-14", "IN"))
+        self.assertEqual(entry.closed_note("2026-11-13", "IN"), "")
+        self.assertEqual(entry.closed_note("2026-11-10", "US"), "")

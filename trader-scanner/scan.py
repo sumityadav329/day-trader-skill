@@ -458,16 +458,50 @@ def live_fno_symbols(cache_dir="trader"):
     return [(u + ".NS", names.get(u + ".NS", u)) for u in und] or None
 
 
+INDEX_CSV = {"nifty50": "ind_nifty50list", "niftybank": "ind_niftybanklist", "niftynext50": "ind_niftynext50list",
+             "nifty100": "ind_nifty100list", "nifty500": "ind_nifty500list"}
+
+
+def live_index_symbols(p_name, cache_dir="trader"):
+    """Constituents from NSE's public index archive (plain CSV, no login), cached a day.
+    [(SYMBOL.NS, company)] or None if it can't be read."""
+    import csv
+    import io
+    stem = INDEX_CSV.get(p_name)
+    if not stem:
+        return None
+    cache = os.path.join(cache_dir, stem + ".csv")
+    try:
+        if not (os.path.isfile(cache) and time.time() - os.path.getmtime(cache) < 86400):
+            req = urllib.request.Request("https://nsearchives.nseindia.com/content/indices/%s.csv" % stem,
+                                         headers={"User-Agent": "trader-skill/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                blob = r.read()
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(cache, "wb") as fh:
+                fh.write(blob)
+        with open(cache, encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except Exception:
+        return None
+    out = [(r["Symbol"].strip().upper() + ".NS", r.get("Company Name", "").strip()) for r in rows if r.get("Symbol")]
+    return out or None
+
+
 def preset_list(p_name):
-    """Preset -> [(symbol, name)]. fno is live; nifty500 is not a real Nifty 500 list, and says so."""
+    """Preset -> [(symbol, name)]. Index presets come live from NSE's public CSVs, fno from the Upstox master; the
+    bundled lists are the fallback (and nifty500's says it is only Nifty 100)."""
     if p_name == "fno":
         live = live_fno_symbols()
         if live:
             return live
         print("scan: could not read the live F&O list; using the bundled approximation (incomplete).", file=sys.stderr)
+    live = live_index_symbols(p_name)
+    if live:
+        return live
     if p_name == "nifty500":
-        print("scan: the nifty500 preset is only the bundled Nifty 100 (100 names), not the full Nifty 500. "
-              "Use --universe FILE for the full list.", file=sys.stderr)
+        print("scan: could not read NSE's Nifty 500 list; using the bundled Nifty 100 (100 names), NOT the full "
+              "Nifty 500. Use --universe FILE for the full list.", file=sys.stderr)
     return INDIAN_PRESETS.get(p_name)
 
 

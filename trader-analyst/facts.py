@@ -114,7 +114,10 @@ class Fetcher(object):
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise FactsError("no data at %s" % url)
-            raise FactsError("HTTP %s for %s" % (exc.code, url))
+            hint = (" Yahoo no longer serves this without a browser session, so Indian financials are not available "
+                    "automatically. Read the results at https://www.nseindia.com/companies-listing/corporate-filings-financial-results "
+                    "or screener.in, and pass saved data with --offline DIR.") if exc.code in (401, 403) and "finance.yahoo" in url else ""
+            raise FactsError("HTTP %s for %s.%s" % (exc.code, url, hint))
         except urllib.error.URLError as exc:
             raise FactsError("could not reach %s: %s" % (url, exc.reason))
         return json.loads(data.decode("utf-8"))

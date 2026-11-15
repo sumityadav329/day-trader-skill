@@ -1,14 +1,14 @@
 ---
 name: trader-budget
 description: >-
-  Budget Manager. Sizes every position to your budget and your max loss per
+  Budget Manager. Sizes every position to the user's budget and the user's max loss per
   trade. Reads the trade plan from trader-exit (entry, stop, target), finds
   the whole shares that fit inside four limits (max loss per trade, position
-  cap, max order, cash after your buffer), says which limit decided it, and
+  cap, max order, cash after the user's buffer), says which limit decided it, and
   writes ONE bracket order (entry, stop-loss, take-profit) to
   trader/orders.json in the exact shape of Alpaca's place_stock_order. A stop
-  too far away for your max loss is a plain refusal, not a smaller order.
-  Nothing is placed. Use when the user says "how many shares", "size this
+  too far away for the user's max loss is a plain refusal, not a smaller order.
+  Nothing is placed. This skill should be used when the user says "I have ₹1,00,000", "size this trade in rupees", "how many shares", "size this
   trade", "how much should I buy", "I have $5,000", "I only want to risk $50
   a trade", "set my rules", "keep 10% in cash", or after /trader-exit writes
   a plan.

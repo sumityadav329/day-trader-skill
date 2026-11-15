@@ -1,18 +1,18 @@
 ---
 name: trader-broker
 description: >-
-  Order Executor. Sends approved orders to your broker, paper trading by
-  default, never without your yes. Shows each order as a plain ticket (a
+  Order Executor. Sends approved orders to the user's broker, paper trading by
+  default, never without the user's yes. Shows each order as a plain ticket (a
   bracket shows its stop-loss, take-profit and the max loss at the stop)
   plus the exact JSON for Alpaca's place_stock_order, Upstox's upstox_place_order,
-  or Zerodha's kite_place_order, records your yes word
+  or Zerodha's kite_place_order, records the user's yes word
   for word, then Claude's own Allow once / Deny card asks again. Builds the
-  sell ticket that closes a day trade by your flat-by time, records fills,
+  sell ticket that closes a day trade by the user's flat-by time, records fills,
   and logs each trade's max loss so trader-risk can hold the daily limit.
   Covers setting up Alpaca's official MCP server in Claude Desktop (paper by
   default, keys in env vars, never in chat), Upstox API v2, Zerodha Kite Connect,
   the Interactive Brokers connector, and setting order tools to "Needs approval".
-  Use when the user says "place the order", "buy it", "execute", "send it to my broker",
+  This skill should be used when the user says "place it on Upstox", "flatten my Upstox position", "place the order", "buy it", "execute", "send it to my broker",
   "close my position", "flatten", "get me out", "connect Alpaca", "connect Upstox",
   "set up paper trading", or after /trader-risk passes.
 argument-hint: "[order number]"

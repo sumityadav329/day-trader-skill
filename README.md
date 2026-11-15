@@ -265,4 +265,6 @@ Forked from [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincario
 - **Costs:** sizing shows brokerage, STT, GST and fees with default rates (override `charges` in config; verify against Upstox's calculator), and refuses a trade whose reward:risk falls under your minimum *after* costs.
 - **NSE MCP** (`mcp.nseindia.in`): daily history, live snapshot, corporate actions. No intraday candles, no orders; NSE says informational use only. Config is in `.mcp.json` one folder up (the Upstox project root), not in this repo; restart Claude Code to load it.
 - **Circuit band:** read per stock when a token is set (RELIANCE is ±10 %, not 20 %); without one it is reported as unchecked, never assumed.
-- **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; `trader-pelosi` needs `--offline FILE` and says so), Indian financials in `trader-analyst` (Yahoo returns 401), a real Nifty 500 list.
+- **Index lists:** Nifty 50/Bank/Next 50/100/500 come live from NSE's public CSVs; F&O from the Upstox master.
+- **Holidays:** `trader-entry` says when NSE is shut (calendar covers 2026–2027, from `trader-alerts`).
+- **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; download NSE's deals CSV by hand and pass `--offline FILE`, `trader-pelosi` says so otherwise), Indian financials in `trader-analyst` (Yahoo returns 401; it now says where to read results).

@@ -9,7 +9,7 @@ description: >-
   flag, 20-day MA reclaim, oversold, bounce) and intraday opening-range breakout
   scans on 5-minute bars (09:30-09:45 ET for US, 09:15-09:30 IST for India), then
   writes trader/watchlist.json for trader-news and trader-entry. Free Yahoo data.
-  Use when the user says "scan the market", "find me setups", "what is breaking out",
+  This skill should be used when the user says "scan the market", "find me setups", "what is breaking out",
   "opening range breakouts", "scan Nifty", "scan Indian market", "pre-market scan",
   "build my watchlist", or at the start of a trading day before /trader-news.
 argument-hint: "[universe | daily | orb] [--preset PRESET] [--market US|IN]"
@@ -68,7 +68,7 @@ For Indian markets, `universe --preset PRESET` builds clean universes:
 - `niftybank`: 12 banking institutions driving Indian financial markets.
 - `niftynext50`: 50 next large-cap companies.
 - `nifty100`: Nifty 50 and Nifty Next 50 combined.
-- `nifty500`: **not a real Nifty 500**: only the bundled Nifty 100 (100 names), and it warns. Use `--universe FILE` for the full list.
+- `nifty50`, `niftybank`, `niftynext50`, `nifty100`, `nifty500`: read live from NSE's public index CSVs (cached a day, no login). If NSE can't be reached the bundled lists are used, and `nifty500` then warns it is only Nifty 100.
 - `fno`: every stock with futures today (about 218), read live from Upstox's public instrument master; falls back to an incomplete bundled list with a warning.
 
 Indian symbols are normalized with `.NS` for NSE (e.g. `RELIANCE.NS`, `TCS.NS`,

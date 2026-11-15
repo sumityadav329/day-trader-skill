@@ -170,6 +170,32 @@ def select(rows, members=None, kind="P", since=None):
 
 # ---------------------------------------------------------------- Indian Regulatory Disclosures
 
+def deals_csv_rows(text):
+    """Rows of NSE's downloadable bulk/block-deals CSV (Date, Symbol, Security Name, Client Name, Buy/Sell,
+    Quantity Traded, Trade Price / Wght. Avg. Price, Remarks), re-keyed for parse_indian_deals. [] if not that CSV."""
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
+    if not rows:
+        return []
+    out = []
+    for r in rows:
+        k = {re.sub(r"[^a-z]", "", str(key).lower()): (v or "").strip() for key, v in r.items() if key}
+        if not k.get("symbol"):
+            return []
+        d = k.get("date", "")
+        for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d"):
+            try:
+                d = _dt.datetime.strptime(d.title() if "-" in d and fmt == "%d-%b-%Y" else d, fmt).date().isoformat()
+                break
+            except ValueError:
+                continue
+        out.append({"symbol": k["symbol"], "company_name": k.get("securityname"), "client_name": k.get("clientname"),
+                    "buy_sell": k.get("buysell") or "BUY", "quantity": (k.get("quantitytraded") or "0").replace(",", ""),
+                    "trade_price": (k.get("tradepricewghtavgprice") or "0").replace(",", ""), "date": d})
+    return out
+
+
 def parse_indian_deals(data_or_text):
     """Parse NSE/BSE Bulk & Block Deals into standard records."""
     text = data_or_text.decode("utf-8", "replace") if isinstance(data_or_text, bytes) else data_or_text
@@ -177,7 +203,9 @@ def parse_indian_deals(data_or_text):
     try:
         doc = json.loads(text)
     except ValueError:
-        return []
+        doc = deals_csv_rows(text)
+        if not doc:
+            return []
     items = doc if isinstance(doc, list) else doc.get("data", []) or doc.get("deals", [])
     for it in items:
         sym = (it.get("symbol") or it.get("scrip_code") or it.get("security_code") or "").upper().strip()

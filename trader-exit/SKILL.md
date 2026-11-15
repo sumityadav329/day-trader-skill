@@ -1,14 +1,14 @@
 ---
 name: trader-exit
 description: >-
-  Exit Planner. Sets your stop and your target before you enter, so you know
-  when to get out. Reads the entry from trader-entry (or a price you give),
+  Exit Planner. Sets the user's stop and the user's target before the user enter, so the user know
+  when to get out. Reads the entry from trader-entry (or a price the user gives),
   puts the stop at the opening-range midpoint by default (or the range low,
-  your price, a percent, or a multiple of the ATR), rounds it down to the
-  cent, and sets the target at 2R (or 1R, or your price). Refuses a stop at or
+  the user's price, a percent, or a multiple of the ATR), rounds it down to the
+  cent, and sets the target at 2R (or 1R, or the user's price). Refuses a stop at or
   above the entry, a target at or below it, or a stop too tight to survive the
   spread, and says why. Writes trader/plan.json for the Time Machine, the
-  Budget Manager and Price Alerts. Long side only. Use when the user says
+  Budget Manager and Price Alerts. Long side only. This skill should be used when the user says
   "where's my stop", "set my stop and target", "plan the exit", "when do I get
   out", "stop loss", "what's my R", "risk reward", or right after
   /trader-entry triggers, before /trader-timemachine.

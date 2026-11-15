@@ -9,7 +9,7 @@ description: >-
   and Takeovers) Reg 29 filings, and NSE/BSE Bulk & Block Deals. Alerts once per new
   filing, turns disclosures into clean rows (who, category, stock, ticker, buy or
   sell, shares/contracts, price, trade date, days to disclose), and flags trades in
-  stocks you hold. Use when the user says "what is Pelosi buying", "track Nancy Pelosi",
+  stocks the user holds. This skill should be used when the user says "what is Pelosi buying", "track Nancy Pelosi",
   "Congress trades", "politician stock trades", "check bulk deals", "SEBI insider trading",
   "promoter buying", "block deals today", or "run the Pelosi skill".
 argument-hint: "[member name | --market IN | deals | insider] [--read]"
