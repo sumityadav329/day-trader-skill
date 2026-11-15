@@ -1,14 +1,14 @@
 ---
 name: trader-news
 description: >-
-  News Monitor. Tracks breaking news on every stock you watch and flags what
+  News Monitor. Tracks breaking news on every stock the user watch and flags what
   moves it: Yahoo Finance headlines (US and India), Indian financial news
   (Economic Times, Moneycontrol, Livemint), BSE and NSE corporate announcements,
   and SEC EDGAR 8-K company filings (earnings, CEO changes, deals, restatements)
   with price moves vs yesterday's close. Shows only what is new since the last
   check, newest first, in local time (ET for US, IST for India), tags each item
   (earnings, analyst, deal, halt, regulatory, macro, insider) and never repeats one.
-  Use when the user says "any news on TSLA", "why is Reliance moving", "what's the news
+  This skill should be used when the user says "any news on TSLA", "why is Reliance moving", "what's the news
   on my watchlist", "morning briefing", "pre-market news", "check BSE announcements",
   "monitor the news", or after /trader-scanner finds setups.
 argument-hint: "[tickers] [--market US|IN]"

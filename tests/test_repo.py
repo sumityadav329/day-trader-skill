@@ -39,7 +39,7 @@ class Repo(unittest.TestCase):
         self.assertEqual(found, sorted(SKILLS))
 
     def test_root_matches_the_reel(self):
-        root = sorted(d for d in os.listdir(ROOT) if not d.startswith(".git"))
+        root = sorted(d for d in os.listdir(ROOT) if not d.startswith(".git") and d not in ("trader", ".envrc"))  # gitignored local files
         self.assertEqual(root, sorted([".claude-plugin", "LICENSE", "README.md", "tests"] + SKILLS))
 
     def test_frontmatter_name_and_description(self):
@@ -73,8 +73,8 @@ class Repo(unittest.TestCase):
             readme = " ".join(fh.read().split())
         self.assertTrue(readme.startswith("# The Day Trader skill"))
         for line in (ABOUT,
-                     "https://github.com/Jakeschincariol/day-trader-skill install skill",
-                     "/plugin marketplace add Jakeschincariol/day-trader-skill",
+                     "https://github.com/sumityadav329/day-trader-skill install skill",
+                     "/plugin marketplace add sumityadav329/day-trader-skill",
                      "/plugin install day-trader-skill@day-trader-skill",
                      "## Fine print"):
             self.assertIn(line, readme)

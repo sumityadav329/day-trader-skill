@@ -1,14 +1,14 @@
 ---
 name: trader-entry
 description: >-
-  Entry Timer. Watches a setup bar by bar and tells you the moment to get in.
+  Entry Timer. Watches a setup bar by bar and tells the trader the moment to get in.
   Reads free Yahoo 1-minute or 5-minute bars, builds the opening range (the
   first 15 minutes by default) and calls the entry on the first completed bar
-  that CLOSES above the range high, or above a level you give it (like a
+  that CLOSES above the range high, or above a level the user gives it (like a
   20-day high from the scanner), with an optional volume check. Says waiting
   and how far, triggered with the time and the price, expired, or not open
   yet, and writes trader/entry.json for /trader-exit. Long side only. It never
-  places an order. Use when the user says "tell me when to get in", "watch
+  places an order. This skill should be used when the user says "watch RELIANCE", "has Nifty broken out", "tell me when to get in", "watch
   TSLA", "has it broken out", "did it break the opening range", "entry
   signal", "time my entry", "check my watchlist", or after /trader-scanner
   and /trader-news, before /trader-exit.
@@ -137,6 +137,17 @@ It never places an order, never sizes a position, never sets the stop (that
 is `/trader-exit`), never moves the level after the fact, and never counts a
 bar that has not closed. It never runs `/trader-broker` from a background
 watch: nobody is there to say yes.
+
+## Data source (India)
+
+Default is public Yahoo (free, can lag, and its NSE opening bars can differ from the exchange's). If `UPSTOX_ACCESS_TOKEN` is set in the environment, entry.py uses live Upstox candles instead and the first line says which source it used. Any Upstox failure falls back to Yahoo with a note on stderr. Nothing requires Upstox.
+
+## NSE MCP cross-checks (India, optional)
+
+When the NSE MCP tools are connected (`cm_get_stock_quote`, `get_corporate_actions`; see `.mcp.json`), call them before taking a trigger:
+- Compare `cm_get_stock_quote` with the last close entry.py reports. A gap of more than a few ticks means the candles are lagging, so wait for the next bar.
+- Call `get_corporate_actions` for the symbol. An ex-date, split or bonus today makes the opening range misleading.
+NSE MCP gives a snapshot, not intraday candles, and NSE says it is for information, not for placing trades. Skip this section when the tools are not connected.
 
 ## Safety
 

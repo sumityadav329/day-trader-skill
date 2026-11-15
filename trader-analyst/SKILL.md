@@ -7,7 +7,7 @@ description: >-
   changed: revenue, gross, operating and net margins, net income and diluted EPS,
   quarter by quarter, each against the same quarter a year earlier, with trailing
   twelve months (TTM) in USD or INR Crores. Reads earnings call transcripts when
-  pasted. Use when the user says "how did Tesla's earnings look", "analyze Reliance
+  pasted. This skill should be used when the user says "how did Tesla's earnings look", "analyze Reliance
   results", "what changed this quarter", "is revenue growing", "check the 10-Q",
   "check SEBI results", "compare margins", or before trading a stock around earnings.
 argument-hint: "[tickers] [--market US|IN]"

@@ -59,6 +59,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
@@ -435,6 +436,43 @@ def offline_file(path, sym, market="US"):
     return path
 
 
+def upstox_chart_text(sym, interval, day, today):
+    """OPTIONAL real-time source. With UPSTOX_ACCESS_TOKEN (or UPSTOX_ANALYTICS_TOKEN) set, 5m/1m candles from
+    Upstox, returned as Yahoo-shaped chart JSON so parse_chart works unchanged. Returns None when there is no
+    token. Raises on any failure; the caller falls back to public Yahoo.
+    # ponytail: borrows the instrument lookup from trader-broker/ticket.py (same plugin, sibling folder)."""
+    token = os.environ.get("UPSTOX_ACCESS_TOKEN") or os.environ.get("UPSTOX_ANALYTICS_TOKEN")
+    if not token:
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "trader_ticket", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                      "trader-broker", "ticket.py"))
+    tk = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tk)
+    row = tk.resolve_upstox_instrument(sym, "BSE_EQ" if sym.upper().endswith(".BO") else "NSE_EQ")
+    key = urllib.parse.quote(row["instrument_key"], safe="")
+    mins = {"5m": 5, "1m": 1}[interval]
+    if day >= today:
+        url = "https://api.upstox.com/v3/historical-candle/intraday/%s/minutes/%d" % (key, mins)
+    else:
+        url = "https://api.upstox.com/v3/historical-candle/%s/minutes/%d/%s/%s" % (key, mins, day, day)
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token, "Accept": "application/json",
+                                               "User-Agent": "trader-skill/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        candles = (json.loads(r.read().decode("utf-8")).get("data") or {}).get("candles") or []
+    rows = sorted(candles, key=lambda c: c[0])           # Upstox sends newest first
+    stamps = [int(datetime.datetime.fromisoformat(c[0]).timestamp()) for c in rows]
+    return json.dumps({"chart": {"result": [{
+        "meta": {"symbol": yahoo_symbol(sym, "IN"), "dataGranularity": interval, "currency": "INR",
+                 "exchangeTimezoneName": "Asia/Kolkata", "gmtoffset": 19800,
+                 "regularMarketTime": stamps[-1] if stamps else None},
+        "timestamp": stamps,
+        "indicators": {"quote": [{"open": [c[1] for c in rows], "high": [c[2] for c in rows],
+                                  "low": [c[3] for c in rows], "close": [c[4] for c in rows],
+                                  "volume": [c[5] for c in rows]}]}}], "error": None}})
+
+
 def get_chart(sym, interval, day=None, offline=None, today=None, market=None):
     """Bars for one ticker, from Yahoo (range=1d for today) or a saved file."""
     sym = sym.upper()
@@ -449,8 +487,19 @@ def get_chart(sym, interval, day=None, offline=None, today=None, market=None):
     else:
         if today is None:
             today = to_ist(utc_now()).date() if market == "IN" else to_eastern(utc_now()).date()
-        text = yahoo_get(chart_path(sym, chart_range(day or today, today, interval), interval, market=market))
+        text, source = None, "Yahoo (public, free, can lag)"
+        if market == "IN":
+            try:
+                text = upstox_chart_text(sym, interval, day or today, today)
+                if text:
+                    source = "Upstox (live)"
+            except Exception as e:   # any problem: use public Yahoo, and say so
+                print("entry: Upstox candles unavailable (%s); using Yahoo." % e, file=sys.stderr)
+                text = None
+        if not text:
+            text = yahoo_get(chart_path(sym, chart_range(day or today, today, interval), interval, market=market))
     ch = parse_chart(text, sym)
+    ch["source"] = source if not offline else "saved file"
     expected = yahoo_symbol(sym, market)
     if ch["symbol"] != expected and ch["symbol"] != sym and ch["symbol"] != sym.replace(".", "-"):
         raise EntryError("the chart file holds %s, not %s" % (ch["symbol"], sym))
@@ -534,6 +583,7 @@ def evaluate(chart, now_utc, setup="orb", or_minutes=15, interval="5m", level=No
            "last": None, "forming": None, "min_volume_x": min_volume_x,
            "prev_close": chart.get("prev_close"), "calendar_known": day.year in CALENDAR_YEARS, "_bars": []}
     dt = chart.get("data_time")
+    res["source"] = chart.get("source")
     res["data_time"] = (to_ist(utc_of(dt)) if is_in else to_eastern(utc_of(dt))).strftime("%Y-%m-%d %H:%M:%S") if dt else None
     ok, why = trading_day(day, market=market)
     exch = "NSE/BSE" if is_in else "NYSE"
@@ -704,6 +754,23 @@ def setup_name(res, cs="$"):
     return "close above %s%.2f" % (cs, res["level"]) if res["level"] is not None else "close above a level"
 
 
+def closed_note(day_text, market):
+    """'' on a trading day, else why the market is shut. NSE calendar comes from trader-alerts (sibling folder)."""
+    if market != "IN":
+        return ""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "trader_alerts", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                          "trader-alerts", "alerts.py"))
+        al = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(al)
+        ok, why = al.trading_day(datetime.date.fromisoformat(str(day_text)[:10]), "IN")
+        return "" if ok else "NSE/BSE is closed on %s (%s): any bars below are from an earlier session." % (day_text, why)
+    except Exception:
+        return ""
+
+
 def describe(res):
     """Plain lines for a person."""
     when = datetime.datetime.strptime(res["now"], "%Y-%m-%d %H:%M:%S")
@@ -711,11 +778,15 @@ def describe(res):
     is_in = (res.get("market") == "IN")
     tz = "IST" if is_in else "ET"
     cs = "₹" if is_in else "$"
-    head = "%s  %s %s %s  %s on %s bars (Yahoo, free, can lag)" % (
-        res["symbol"], when.strftime("%a %Y-%m-%d"), when.strftime("%H:%M"), tz, setup_name(res, cs), bars)
+    head = "%s  %s %s %s  %s on %s bars (%s)" % (
+        res["symbol"], when.strftime("%a %Y-%m-%d"), when.strftime("%H:%M"), tz, setup_name(res, cs), bars,
+        res.get("source") or "Yahoo, free, can lag")
     if res.get("data_time") and res["data_time"] <= res["now"] and res["data_time"][:10] == res["date"]:
         head += ", data to %s" % res["data_time"][11:]
     out = [head]
+    closed = closed_note(res.get("date"), res.get("market"))
+    if closed:
+        out.append(closed)
     orr = res.get("opening_range")
     if orr:
         start = datetime.datetime.strptime(res["opens"], "%H:%M")
@@ -1053,7 +1124,7 @@ def main(argv=None):
         p.add_argument("--level", type=float, help="the price to close above (--setup level)")
         p.add_argument("--min-volume-x", type=float, help="trigger bar volume vs the range bars' average")
         p.add_argument("--side", default="buy", choices=["buy", "long", "sell", "short"], help="v2: buy only")
-        p.add_argument("--now", help='pretend it is this New York time, e.g. "2026-10-19 10:15"')
+        p.add_argument("--now", help='pretend it is this market time (IST for NSE/BSE, New York for US), e.g. "2026-10-19 10:15"')
         p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON (.json/.json.gz) or a folder")
         p.add_argument("--config", default="trader/config.json")
         p.add_argument("--market", choices=["US", "IN"], help="market calendar/session (default auto-detected from symbol)")

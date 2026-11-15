@@ -26,7 +26,7 @@ an order on its own. Paper trading is the default.
 Paste this into Claude:
 
 ```
-https://github.com/Jakeschincariol/day-trader-skill
+https://github.com/sumityadav329/day-trader-skill
 
 install skill
 ```
@@ -34,7 +34,7 @@ install skill
 Or as a plugin, in Claude Code:
 
 ```
-/plugin marketplace add Jakeschincariol/day-trader-skill
+/plugin marketplace add sumityadav329/day-trader-skill
 /plugin install day-trader-skill@day-trader-skill
 ```
 
@@ -43,7 +43,7 @@ Claude Code namespaces plugin skills, so installed as a plugin they show up as
 plain `/trader-scanner`:
 
 ```bash
-git clone https://github.com/Jakeschincariol/day-trader-skill.git
+git clone https://github.com/sumityadav329/day-trader-skill.git
 cp -r day-trader-skill/trader-* ~/.claude/skills/
 ```
 
@@ -254,3 +254,25 @@ tests/              unittest suite + offline fixtures
 ```
 
 MIT. Made by [Jake Schincariol](https://opusjake.ai).
+
+## Indian market: data sources and known limits
+
+Forked from [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill) (MIT) and extended for NSE/BSE and Upstox.
+
+- **Instruments:** ticket and sizing resolve ISIN keys, tick size, lot and freeze quantity from Upstox's public instrument master (cached in `trader/`). `NSE_EQ|SYMBOL` keys are rejected by Upstox and never emitted.
+- **Public by default, Upstox optional.** Everything works on public data with no login: Yahoo candles, Upstox's public instrument list, NSE's public data. Set `UPSTOX_ACCESS_TOKEN` in the environment to upgrade the entry timer to live Upstox candles and to read each stock's circuit band; any failure falls back to Yahoo. Don't trust Yahoo NSE candles for opening-range breakouts: on 2026-11-13 RELIANCE's 15-minute range high was ₹1333.40 on Yahoo and ₹1336.60 on Upstox, and the signal fired a bar apart.
+- **Candles:** Yahoo 5-minute bars drop a few NSE bars every day; the time machine forward-fills up to 4 holes. Replays end at the 15:15 MIS square-off.
+- **Costs:** sizing shows brokerage, STT, GST and fees with default rates (override `charges` in config; verify against Upstox's calculator), and refuses a trade whose reward:risk falls under your minimum *after* costs.
+- **NSE MCP** (`mcp.nseindia.in`): daily history, live snapshot, corporate actions. No intraday candles, no orders; NSE says informational use only. Config is in `.mcp.json` one folder up (the Upstox project root), not in this repo; restart Claude Code to load it.
+- **Circuit band:** read per stock when a token is set (RELIANCE is ±10 %, not 20 %); without one it is reported as unchecked, never assumed.
+- **Index lists:** Nifty 50/Bank/Next 50/100/500 come live from NSE's public CSVs; F&O from the Upstox master.
+- **Holidays:** `trader-entry` says when NSE is shut (calendar covers 2026–2027, from `trader-alerts`).
+- **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; download NSE's deals CSV by hand and pass `--offline FILE`, `trader-pelosi` says so otherwise), Indian financials in `trader-analyst` (Yahoo returns 401; it now says where to read results).
+
+## First day on the real market (paper only)
+
+1. Log in to Upstox and export the fresh token (it expires about 03:30 IST daily): `set -a; . ../.env; set +a`. Without it everything still runs on public Yahoo data, with the weaker opening-range candles.
+2. 09:00: `python3 trader-scanner/scan.py daily --preset nifty100 --market IN` for the watchlist, then `trader-news` on the picks.
+3. After 09:30: `python3 trader-entry/entry.py check SYMBOL --market IN`. The first line must say `Upstox (live)`. Run once more with the token unset and compare the opening range: that is the Yahoo-versus-Upstox gap measured on a live session.
+4. On a trigger: `trader-exit`, `trader-timemachine`, `trader-budget` (check the net-of-costs line and the circuit band), `trader-risk`, then `trader-broker show`. Keep `paper: true` and `UPSTOX_ALLOW_LIVE_ORDERS` off. Read the entry and stop payloads; place nothing live.
+5. Note anything that disagrees with the Upstox app (price, tick, band, costs) and fix it before any real order.

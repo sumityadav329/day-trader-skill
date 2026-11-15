@@ -90,6 +90,7 @@ CLOSE_MIN = 16 * 60
 IN_SESSION_BARS = 75 # 09:15 to 15:30 in 5-minute bars (Indian market: 375 minutes)
 IN_OPEN_MIN = 9 * 60 + 15
 IN_CLOSE_MIN = 15 * 60 + 30
+IN_MIS_FLAT_MIN = 15 * 60 + 15  # default replay end: intraday (MIS) positions are squared off around 15:15-15:20
 
 MIN_SESSIONS = 20
 SAMPLE_PATHS = 160
@@ -365,14 +366,35 @@ def split_sessions(bars):
     return days
 
 
-def full_sessions(days, before, session_bars=SESSION_BARS):
+IN_MAX_GAP = 4  # Yahoo's NSE feed drops 1-4 five-minute bars a day (15:20 every day, often 15:15/15:25)
+
+
+def fill_gaps(s, session_bars, max_gap):
+    """Forward-fill up to max_gap missing slots with a flat bar at the previous close (volume 0).
+    Slot 0 must exist. Returns a full {slot: bar} or None."""
+    if len(s) == session_bars:
+        return s
+    if 0 not in s or session_bars - len(s) > max_gap:
+        return None
+    out = dict(s)
+    for i in range(1, session_bars):
+        if i not in out:
+            c = out[i - 1]["c"]
+            out[i] = {"date": out[0]["date"], "slot": i, "start": None, "o": c, "h": c, "l": c, "c": c, "v": 0,
+                      "filled": True}
+    return out
+
+
+def full_sessions(days, before, session_bars=SESSION_BARS, max_gap=0):
     """Full sessions strictly before the plan's date, oldest first,
-    and the short ones that were left out (half days, gaps)."""
+    and the short ones that were left out (half days, gaps). max_gap > 0 forward-fills small holes."""
     full, short = [], []
     for d in sorted(days):
         if d >= before:
             continue
         s = days[d]
+        if max_gap:
+            s = fill_gaps(s, session_bars, max_gap) or s
         if len(s) == session_bars:
             full.append((d, [s[i] for i in range(session_bars)]))
         else:
@@ -772,7 +794,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     k = plan["entry_bar"]
     early = (not is_in) and (plan["date"] in NYSE_EARLY_CLOSE)
     end_min = EARLY_MIN if early else close_min
-    until_min = end_min if until is None else parse_clock(until, "--until")
+    until_min = (IN_MIS_FLAT_MIN if is_in else end_min) if until is None else parse_clock(until, "--until")
     if (until_min - open_min) % 5 or until_min > end_min:
         raise TMError("--until must be on the 5-minute grid and no later than %s%s"
                       % (clock12(end_min), " (an early close)" if early else ""))
@@ -792,7 +814,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     if not eb["l"] - 0.01 <= plan["entry"] <= eb["h"] + 0.01:
         warn.append("the plan's entry %.2f is outside that bar's range %.2f to %.2f"
                     % (plan["entry"], eb["l"], eb["h"]))
-    sessions, short = full_sessions(days, plan["date"], session_bars=session_bars)
+    sessions, short = full_sessions(days, plan["date"], session_bars=session_bars, max_gap=IN_MAX_GAP if is_in else 0)
     if len(sessions) < MIN_SESSIONS:
         raise TMError("only %d full session(s) of %s before %s in the data; the time machine needs at least %d"
                       % (len(sessions), sym, plan["date"], MIN_SESSIONS))
@@ -996,7 +1018,7 @@ def main(argv=None):
         p.add_argument("--plan", default="trader/plan.json", help="the plan from trader-exit")
         p.add_argument("--symbol", help="or give the plan as flags: ticker")
         p.add_argument("--side", default="buy", choices=["buy", "sell"])
-        p.add_argument("--date", help="the plan's day, YYYY-MM-DD (default today, New York)")
+        p.add_argument("--date", help="the plan's day, YYYY-MM-DD (default today in the market's timezone)")
         p.add_argument("--entry", type=float)
         p.add_argument("--stop", type=float)
         p.add_argument("--target", type=float)
@@ -1007,7 +1029,7 @@ def main(argv=None):
         p.add_argument("--replays", type=int, default=10000)
         p.add_argument("--seed", type=int, default=19)
         p.add_argument("--window", type=int, default=2, help="draw from the same time of day +- this many bars")
-        p.add_argument("--until", help="end each replay at this time (default 16:00 US / 15:30 IN, the close)")
+        p.add_argument("--until", help="end each replay at this time (default 16:00 US / 15:15 IN, the MIS square-off)")
         p.add_argument("--market", choices=["US", "IN"], help="market session: US (NYSE 9:30-16:00 ET) or IN (NSE/BSE 09:15-15:30 IST)")
         p.add_argument("--offline", metavar="FILE", help="a saved Yahoo chart JSON (.json or .json.gz), no network")
         p.add_argument("--now", help='pretend it is this time ("2026-10-19 10:15" New York, or ISO with Z)')

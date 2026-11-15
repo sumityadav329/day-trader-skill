@@ -1,14 +1,14 @@
 ---
 name: trader-timemachine
 description: >-
-  Time Machine. Replays every possible outcome of a trade before you risk a
+  Time Machine. Replays every possible outcome of a trade before the user risk a
   dollar: 10,000 simulated sessions plus every past time the setup fired.
   Takes the plan from trader-exit (entry, stop, target), rebuilds the rest of
   the day 10,000 times from the stock's own 5-minute bars over the last 60
   days, and re-runs the same rule on every past session. Prints the odds of
   target first, stop first, or neither by the close, where the price sits at
   the close, the average R, the history, and one honest verdict, then hands
-  off to /trader-budget. Use when the user says "run the time machine",
+  off to /trader-budget. This skill should be used when the user says "replay this Reliance trade", "run the time machine",
   "replay this trade", "what are the odds", "simulate this trade", "monte
   carlo", "backtest this setup", "how often does this hit the target", "is
   this a coin flip", or after /trader-exit writes a plan, before
@@ -56,7 +56,7 @@ bars), `--offline FILE` (a saved Yahoo chart JSON, `.json` or `.json.gz`),
 1. **The pool.** It keeps only FULL sessions before the plan's date: all 78
    five-minute bars, 9:30 to 4:00 New York time. For Indian markets (NSE/BSE,
    symbols ending in `.NS` or `.BO`, or `--market IN`), 1 full session has 75
-   five-minute bars, 09:15 to 15:30 IST (375 minutes). Half days, gaps, and
+   five-minute bars, 09:15 to 15:30 IST (375 minutes). Yahoo drops 1 to 4 NSE bars a day (15:20 every day), so up to 4 holes are forward-filled with a flat bar. India replays end at 15:15, the MIS square-off, unless `--until` says otherwise. Half days, gaps, and
    today are left out. Every bar becomes four ratios to the bar before it:
    open, high, low and close over the previous close.
 2. **One replay.** Start at the entry price. For each bar left in the day,

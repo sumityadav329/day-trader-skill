@@ -1,18 +1,18 @@
 ---
 name: trader-risk
 description: >-
-  Risk Manager. Checks every trade against your limits and stops anything
+  Risk Manager. Checks every trade against the user's limits and stops anything
   over them, before it can reach the broker. For a day trade: a stop is
-  required, the loss at the stop must fit your max loss per trade (measured
+  required, the loss at the stop must fit the user's max loss per trade (measured
   from the higher of the plan's entry and a fresh price), reward:risk must
-  meet your minimum, the day's total risk must fit your daily loss limit, no
-  more than your trades per day, and no new entries outside your entry
+  meet the user's minimum, the day's total risk must fit the user's daily loss limit, no
+  more than the user's trades per day, and no new entries outside the user's entry
   window or when the market is closed. It also keeps the basics: blocked
   tickers, order size, position cap, cash buffer, margin, short sales,
   options and crypto, malformed or bad bracket orders, duplicates and a daily
   order limit. Getting out is never blocked by a day limit. Prints PASS or
   BLOCK with the reason and records the verdicts so trader-broker only shows
-  an order that passed. Use when the user says "check my order", "is this
+  an order that passed. This skill should be used when the user says "check my Upstox order", "check my order", "is this
   safe", "risk check", "does this break my rules", "can I take this trade",
   "how much have I risked today", or before /trader-broker, always.
 argument-hint: "[path to orders.json]"
@@ -76,7 +76,7 @@ batch that is fine order by order but breaks a limit together is caught.
 | window | (entries) before `no_entries_before` or after `no_entries_after`, or the market is closed |
 | circuit | (entries, Indian markets) entry/limit or target above upper circuit limit, entry/limit or stop below lower circuit limit, or stock locked at circuit band |
 | margin | (entries, Indian MIS) cash under SEBI peak margin upfront requirement (e.g. 20% minimum margin) |
-| tick size | (entries, Indian markets) prices not a multiple of NSE tick size 0.05 INR |
+| tick size | (entries, Indian markets) prices not a multiple of that stock's tick size (the order carries it from the Upstox instrument master: ₹0.01, 0.05, 0.10 or more by stock) |
 | pdt | (entries, US markets only with `pdt_guard` true) 3 day trades already in the last 5 business days |
 | duplicate | (entries) the same symbol and side twice in one batch, or already placed today |
 | daily limit | (entries) `max_orders_per_day` orders already placed today |
@@ -105,7 +105,7 @@ How the numbers work:
   - **Daily Price Bands / Circuit Limits**: SEBI and Indian exchanges enforce strict daily circuit limits (2%, 5%, 10%, 20%). Orders with entry, limit price, or target above the upper circuit, or stop below lower circuit, or attempts to buy when locked at upper circuit, are blocked before reaching the exchange.
   - **SEBI Peak Margin Compliance**: For Intraday MIS trades (`product: "I"` or `"MIS"`), upfront peak margin compliance is verified (default 20% margin for 5x leverage).
   - **MIS Cutoff**: Broker auto-square off occurs between 15:15 and 15:25 IST; new MIS entries are blocked after the cutoff.
-  - **NSE Equities Tick Size**: All orders on NSE must adhere to the 0.05 INR tick size.
+  - **NSE Equities Tick Size**: Prices must be a multiple of the stock's own tick (₹0.01 for about 1,600 names, 0.05 for about 740, 0.10 for about 350); the order carries it from sizing. Without it the check falls back to 0.05.
 
 Warnings do not block, but say them to the user: a LIVE account, a number
 sent as a number instead of a string, a stop that lives only in the plan and

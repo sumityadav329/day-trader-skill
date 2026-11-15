@@ -253,7 +253,7 @@ class TestIndianBudgetAndSizing(unittest.TestCase):
         self.assertEqual(order["exchange"], "NSE_EQ")
         self.assertEqual(order["product"], "I")
         self.assertEqual(order["currency"], "INR")
-        self.assertEqual(order["instrument_token"], "NSE_EQ|INFY")
+        self.assertEqual(order["instrument_token"], "NSE_EQ|INE009A01021")
         self.assertIn("₹", order["why"])
 
     def test_round_tick_nse_equity(self):
@@ -354,7 +354,7 @@ class TestIndianRiskAndCircuitLimits(unittest.TestCase):
         res = check.check([order], self.cfg, now=self.now_ist)
         r = res["results"][0]
         self.assertEqual(r["verdict"], "BLOCK")
-        self.assertTrue(any("multiple of the NSE tick size 0.05 INR" in reason for reason in r["reasons"]))
+        self.assertTrue(any("multiple of this stock's tick size 0.05 INR" in reason for reason in r["reasons"]))
 
     def test_pdt_guard_bypassed_for_indian_market(self):
         # Even with 4 day trades in state, Indian market orders must not be blocked by US PDT rule
@@ -395,7 +395,7 @@ class TestIndianBrokerTickets(unittest.TestCase):
         self.assertEqual(inp["price"], 2500.00)
         self.assertEqual(inp["order_type"], "LIMIT")
         self.assertEqual(inp["transaction_type"], "BUY")
-        self.assertEqual(inp["instrument_token"], "NSE_EQ|RELIANCE")
+        self.assertEqual(inp["instrument_token"], "NSE_EQ|INE002A01018")
         self.assertFalse(inp["is_amo"])
 
     def test_kite_tool_input_format(self):

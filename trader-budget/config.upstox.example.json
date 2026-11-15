@@ -16,7 +16,6 @@
   "no_entries_after": "15:00",
   "flat_by": "15:15",
   "tick_size": 0.05,
-  "circuit_limit_pct": 20,
   "mis_margin_pct": 20,
   "exchange": "NSE_EQ",
   "product": "I",
