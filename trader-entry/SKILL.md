@@ -148,3 +148,7 @@ watch: nobody is there to say yes.
   (Customize > Connectors > tool permissions). Never set an order tool to "Always allow".
 - No options, margin, short selling or leverage unless the config allows it and the user confirms.
 - Broker keys live in environment variables or the Claude Desktop config, never in the chat.
+
+## Data source (India)
+
+Default is public Yahoo (free, can lag, and its NSE opening bars can differ from the exchange's). If `UPSTOX_ACCESS_TOKEN` is set in the environment, entry.py uses live Upstox candles instead and the first line says which source it used. Any Upstox failure falls back to Yahoo with a note on stderr. Nothing requires Upstox.

@@ -349,6 +349,26 @@ def instrument_row(sym, exchange="NSE_EQ", cache_dir="trader"):
     return None
 
 
+def circuit_band(inst):
+    """(lower, upper) daily price band from the Upstox quote, or None. Needs UPSTOX_ACCESS_TOKEN: the band is
+    per stock (RELIANCE is +-10 %, not a flat 20 %) and no public feed carries it."""
+    token = os.environ.get("UPSTOX_ACCESS_TOKEN")
+    if not (token and inst and inst.get("instrument_key")):
+        return None
+    import urllib.parse
+    import urllib.request
+    url = "https://api.upstox.com/v2/market-quote/quotes?instrument_key=" + urllib.parse.quote(inst["instrument_key"], safe="")
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token, "Accept": "application/json",
+                                                   "User-Agent": "trader-skill/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            q = next(iter((json.loads(r.read().decode("utf-8")).get("data") or {}).values()), {})
+        lo, up = _f(q.get("lower_circuit_limit")), _f(q.get("upper_circuit_limit"))
+        return (lo, up) if lo and up else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- Indian intraday (MIS) costs
 
 # Defaults for Upstox equity intraday; rates change, so override with "charges" in config and
@@ -511,6 +531,9 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         l["binds"] = l["name"] == bound[0]
     cost = round(qty * ref, 2)
     loss = round(qty * risk_c / 100.0, 2)
+    costs = ({"at_target": india_intraday_costs(ref, target, qty, c.get("charges")),
+              "at_stop": india_intraday_costs(ref, stop, qty, c.get("charges"))} if is_in and qty else None)
+    band = circuit_band(inst) if is_in else None
     refusal = None
     min_order = _f(c.get("min_order_inr")) if (is_in and c.get("min_order_inr") is not None) else (_f(c.get("min_order")) or _f(c.get("min_order_usd"))) or 0.0
     if qty == 0:
@@ -525,6 +548,13 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         refusal = ("reward:risk %.2f (target %s, entry %s, stop %s) is under your minimum %s, so trader-risk "
                    "would block it. No order. Skip it, or make a new plan with trader-exit."
                    % (reward_c / float(risk_c), _price(target, tick), _price(ref, tick), _price(stop, tick), _num(c["min_reward_risk"])))
+    elif costs and _f(c.get("min_reward_risk")) and \
+            (qty * reward_c / 100.0 - costs["at_target"]) < _f(c["min_reward_risk"]) * (qty * risk_c / 100.0 + costs["at_stop"]) - EPS:
+        refusal = ("reward:risk is %.2f gross but only %.2f after costs (about %s to win, %s extra on a loss), under your "
+                   "minimum %s. No order. Skip it, or plan a wider target with trader-exit."
+                   % (reward_c / float(risk_c),
+                      (qty * reward_c / 100.0 - costs["at_target"]) / (qty * risk_c / 100.0 + costs["at_stop"]),
+                      money(costs["at_target"], currency), money(costs["at_stop"], currency), _num(c["min_reward_risk"])))
     elif cost < min_order - 0.005:
         refusal = ("%d share%s of %s is %s, under your %s minimum order. No order."
                    % (qty, "" if qty == 1 else "s", sym, money(cost, currency), money(min_order, currency)))
@@ -541,8 +571,7 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         "cost": cost, "max_loss": loss, "flat_by": flat_by,
         "order_type": "limit" if limit is not None else "market", "refusal": refusal,
         "currency": currency, "tick_size": tick, "is_indian": is_in,
-        "costs": ({"at_target": india_intraday_costs(ref, target, qty, c.get("charges")),
-                   "at_stop": india_intraday_costs(ref, stop, qty, c.get("charges"))} if is_in and qty else None),
+        "costs": costs, "circuit_lower": band[0] if band else None, "circuit_upper": band[1] if band else None,
         "instrument_key": (inst or {}).get("instrument_key"), "lot_size": (inst or {}).get("lot_size"),
         "freeze_quantity": (inst or {}).get("freeze_quantity"),
     }
@@ -584,6 +613,8 @@ def bracket_order(s):
         if s.get("instrument_key"):  # ISIN key; NSE_EQ|SYMBOL is rejected by Upstox. trader-broker resolves it if absent.
             o["instrument_token"] = s["instrument_key"]
         o["tick_size"] = s.get("tick_size")
+        if s.get("circuit_upper"):
+            o["upper_circuit"], o["lower_circuit"] = s["circuit_upper"], s["circuit_lower"]
     return o
 
 
@@ -597,6 +628,10 @@ def plan_report(s, order, notes=()):
     lines.append("Stop %s%s. Target %s%s." % (_price(s["stop"], tick), (": " + s["stop_label"]) if s["stop_label"] else "",
                                              _price(s["target"], tick),
                                              (": " + s["target_label"]) if s["target_label"] else ""))
+    if s.get("is_indian") and not s.get("circuit_upper"):
+        lines.append("Circuit band: unknown (it needs an Upstox token), so not checked. Look it up before a limit order near the day's extremes.")
+    elif s.get("circuit_upper"):
+        lines.append("Circuit band %s to %s (from the Upstox quote)." % (_price(s["circuit_lower"], tick), _price(s["circuit_upper"], tick)))
     if s.get("costs"):
         k, q = s["costs"], int(s["qty"])
         gross_w, gross_l = (s["target"] - s["entry"]) * q, (s["entry"] - s["stop"]) * q

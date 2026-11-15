@@ -260,7 +260,9 @@ MIT. Made by [Jake Schincariol](https://opusjake.ai).
 Forked from [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill) (MIT) and extended for NSE/BSE and Upstox.
 
 - **Instruments:** ticket and sizing resolve ISIN keys, tick size, lot and freeze quantity from Upstox's public instrument master (cached in `trader/`). `NSE_EQ|SYMBOL` keys are rejected by Upstox and never emitted.
-- **Candles:** Yahoo 5-minute bars (free, can lag, a few NSE bars missing every day; the time machine forward-fills up to 4 holes). Replays end at the 15:15 MIS square-off.
-- **Costs:** sizing shows brokerage, STT, GST and fees with default rates (override `charges` in config; verify against Upstox's calculator).
+- **Public by default, Upstox optional.** Everything works on public data with no login: Yahoo candles, Upstox's public instrument list, NSE's public data. Set `UPSTOX_ACCESS_TOKEN` in the environment to upgrade the entry timer to live Upstox candles and to read each stock's circuit band; any failure falls back to Yahoo. Don't trust Yahoo NSE candles for opening-range breakouts: on 2026-11-13 RELIANCE's 15-minute range high was ₹1333.40 on Yahoo and ₹1336.60 on Upstox, and the signal fired a bar apart.
+- **Candles:** Yahoo 5-minute bars drop a few NSE bars every day; the time machine forward-fills up to 4 holes. Replays end at the 15:15 MIS square-off.
+- **Costs:** sizing shows brokerage, STT, GST and fees with default rates (override `charges` in config; verify against Upstox's calculator), and refuses a trade whose reward:risk falls under your minimum *after* costs.
 - **NSE MCP** (`mcp.nseindia.in`): daily history, live snapshot, corporate actions. No intraday candles, no orders; NSE says informational use only. Config is in `.mcp.json` one folder up (the Upstox project root), not in this repo; restart Claude Code to load it.
+- **Circuit band:** read per stock when a token is set (RELIANCE is ±10 %, not 20 %); without one it is reported as unchecked, never assumed.
 - **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; `trader-pelosi` needs `--offline FILE` and says so), Indian financials in `trader-analyst` (Yahoo returns 401), a real Nifty 500 list.

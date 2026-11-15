@@ -148,3 +148,87 @@ class StopSide(unittest.TestCase):
         for entry, stop_side in (("buy", "SELL"), ("sell", "BUY")):
             o = {"symbol": "TCS", "qty": 1, "side": entry, "stop_loss_stop_price": "100"}
             self.assertEqual(ticket.upstox_stop_input(o, {})["transaction_type"], stop_side)
+
+
+import datetime
+import json as _json
+import os as _os
+from unittest import mock
+
+entry = load("trader-entry", "entry")
+
+# real Upstox v3 candles for RELIANCE, 2026-11-13 (newest first, as the API sends them)
+REAL_CANDLES = [["2026-11-13T15:25:00+05:30", 1340.7, 1340.7, 1339.7, 1339.7, 512357, 0],
+                ["2026-11-13T09:15:00+05:30", 1336.6, 1336.6, 1325.2, 1327.0, 559540, 0]]
+
+
+class _Resp:
+    def __init__(self, body): self.body = body
+    def read(self): return self.body
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class UpstoxCandles(unittest.TestCase):
+    def _run(self, token="t", candles=REAL_CANDLES, day=datetime.date(2026, 11, 13), today=datetime.date(2026, 11, 15)):
+        env = {"UPSTOX_ACCESS_TOKEN": token} if token else {}
+        body = _json.dumps({"status": "success", "data": {"candles": candles}}).encode()
+        with mock.patch.dict(_os.environ, env, clear=False), \
+             mock.patch.object(entry.urllib.request, "urlopen", return_value=_Resp(body)) as op:
+            if not token:
+                _os.environ.pop("UPSTOX_ACCESS_TOKEN", None); _os.environ.pop("UPSTOX_ANALYTICS_TOKEN", None)
+            return entry.upstox_chart_text("RELIANCE.NS", "5m", day, today), op
+
+    def test_no_token_means_public_source(self):
+        text, op = self._run(token=None)
+        self.assertIsNone(text)
+        op.assert_not_called()
+
+    def test_converts_to_yahoo_shape_oldest_first(self):
+        text, op = self._run()
+        ch = entry.parse_chart(text, "RELIANCE.NS")
+        self.assertEqual(ch["symbol"], "RELIANCE.NS")
+        self.assertEqual([b["o"] for b in ch["bars"]], [1336.6, 1340.7])
+        self.assertLess(ch["bars"][0]["t"], ch["bars"][1]["t"])
+        self.assertIn("INE002A01018", op.call_args[0][0].full_url.replace("%7C", "|"))
+
+    def test_past_day_uses_history_and_today_uses_intraday(self):
+        _, op = self._run()
+        self.assertIn("/historical-candle/", op.call_args[0][0].full_url)
+        self.assertNotIn("/intraday/", op.call_args[0][0].full_url)
+        _, op = self._run(day=datetime.date(2026, 11, 15))
+        self.assertIn("/intraday/", op.call_args[0][0].full_url)
+
+
+class NetOfCostsAndBand(unittest.TestCase):
+    CFG = {"paper": True, "broker": "upstox", "market": "IN", "budget": 100000.0, "max_loss_per_trade_inr": 1000.0,
+           "max_order_inr": 75000.0, "min_order_inr": 100.0, "min_reward_risk": 1.0}
+
+    def _plan(self, stop, target):
+        return {"symbol": "RELIANCE.NS", "side": "buy", "entry": 1334.0, "stop": stop, "target": target}
+
+    def test_two_r_plan_passes_net_of_costs(self):
+        s = size.size_trade(self._plan(1328.9, 1344.3), self.CFG, today="2026-11-13")
+        self.assertIsNone(s["refusal"])          # live-checked: gross 2.02, net 1.40
+
+    def test_thin_target_refused_after_costs_though_gross_passes(self):
+        # gross reward:risk 1.04 clears min 1.0, but costs push it under
+        s = size.size_trade(self._plan(1328.9, 1339.3), self.CFG, today="2026-11-13")
+        self.assertGreaterEqual(s["reward_risk"], 1.0)
+        self.assertIn("after costs", s["refusal"] or "")
+
+    def test_no_token_means_band_unknown_not_assumed(self):
+        with mock.patch.dict(_os.environ, {}, clear=False):
+            _os.environ.pop("UPSTOX_ACCESS_TOKEN", None)
+            s = size.size_trade(self._plan(1328.9, 1344.3), self.CFG, today="2026-11-13")
+        self.assertIsNone(s["circuit_upper"])
+        self.assertNotIn("upper_circuit", size.bracket_order(s))
+
+    def test_band_from_quote_rides_on_the_order(self):
+        body = _json.dumps({"status": "success", "data": {"NSE_EQ:RELIANCE": {
+            "upper_circuit_limit": 1473.6, "lower_circuit_limit": 1205.8}}}).encode()
+        with mock.patch.dict(_os.environ, {"UPSTOX_ACCESS_TOKEN": "t"}), \
+             mock.patch("urllib.request.urlopen", return_value=_Resp(body)):
+            s = size.size_trade(self._plan(1328.9, 1344.3), self.CFG, today="2026-11-13")
+        o = size.bracket_order(s)
+        self.assertEqual((o["lower_circuit"], o["upper_circuit"]), (1205.8, 1473.6))
