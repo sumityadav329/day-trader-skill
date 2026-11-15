@@ -4,6 +4,11 @@
     {"id": "tsla-plan-stop", "symbol": "TSLA", "type": "stop", "price": 358.32, "note": "plan stop: opening-range midpoint", "date": "2026-10-19"},
     {"id": "tsla-plan-target", "symbol": "TSLA", "type": "target", "price": 370.04, "note": "plan target: 1R (one times the risk)", "date": "2026-10-19"},
     {"id": "tsla-flat-by", "symbol": "TSLA", "type": "time", "at": "15:55", "label": "flat by close", "before_close": true, "date": "2026-10-19"},
-    {"id": "tsla-move-3", "symbol": "TSLA", "type": "pct_move", "pct": 3}
+    {"id": "tsla-move-3", "symbol": "TSLA", "type": "pct_move", "pct": 3},
+    {"id": "opening-bell-in", "type": "opening_bell", "market": "IN"},
+    {"id": "reliance-plan-stop", "symbol": "RELIANCE.NS", "type": "stop", "price": 2490.0, "note": "plan stop: opening-range midpoint", "date": "2026-10-19", "market": "IN"},
+    {"id": "reliance-plan-target", "symbol": "RELIANCE.NS", "type": "target", "price": 2550.0, "note": "plan target: 2R (two times the risk)", "date": "2026-10-19", "market": "IN"},
+    {"id": "reliance-flat-by", "symbol": "RELIANCE.NS", "type": "time", "at": "15:15", "label": "MIS square-off / flat by close", "date": "2026-10-19", "market": "IN"},
+    {"id": "reliance-move-2", "symbol": "RELIANCE.NS", "type": "pct_move", "pct": 2, "market": "IN"}
   ]
 }

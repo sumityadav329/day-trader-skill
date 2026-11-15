@@ -69,6 +69,11 @@ A level setup has no opening range to lean on, so it needs a stop you name.
 - **Flat by.** 15:55 by default (or `flat_by` in the config). Out by then,
   win or lose, no overnight hold. On a 1:00 p.m. early close it moves up to
   12:55. An entry at or after the flat-by time is refused.
+- **Indian market support (NSE/BSE).** For Indian symbols (`.NS`, `.BO`) or
+  with `--market IN`, prices and stops are formatted in INR (₹). Default
+  `flat_by` is `15:15` IST to enforce exit ahead of mandatory broker MIS
+  auto-square-off (15:15 to 15:20 IST), rather than US 15:55 ET. Plan metadata
+  records `"market": "IN"` and `"currency": "INR"`.
 
 ## Steps
 

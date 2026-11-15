@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "upstox": {
+      "command": "uvx",
+      "args": ["upstox-mcp-server"],
+      "env": {
+        "UPSTOX_API_KEY": "YOUR_API_KEY_TYPED_HERE_NEVER_IN_CHAT",
+        "UPSTOX_API_SECRET": "YOUR_API_SECRET_TYPED_HERE_NEVER_IN_CHAT",
+        "UPSTOX_REDIRECT_URI": "https://127.0.0.1:5000/",
+        "UPSTOX_ACCESS_TOKEN": "YOUR_ACCESS_TOKEN_OR_AUTH_FLOW",
+        "UPSTOX_PAPER_TRADE": "true"
+      }
+    }
+  }
+}

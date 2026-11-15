@@ -54,8 +54,10 @@ bars), `--offline FILE` (a saved Yahoo chart JSON, `.json` or `.json.gz`),
 ## How it works
 
 1. **The pool.** It keeps only FULL sessions before the plan's date: all 78
-   five-minute bars, 9:30 to 4:00 New York time. Half days, gaps and today
-   are left out. Every bar becomes four ratios to the bar before it:
+   five-minute bars, 9:30 to 4:00 New York time. For Indian markets (NSE/BSE,
+   symbols ending in `.NS` or `.BO`, or `--market IN`), 1 full session has 75
+   five-minute bars, 09:15 to 15:30 IST (375 minutes). Half days, gaps, and
+   today are left out. Every bar becomes four ratios to the bar before it:
    open, high, low and close over the previous close.
 2. **One replay.** Start at the entry price. For each bar left in the day,
    pick a past bar from the same time of day (plus or minus 2 bars) at

@@ -4,16 +4,17 @@ description: >-
   Order Executor. Sends approved orders to your broker, paper trading by
   default, never without your yes. Shows each order as a plain ticket (a
   bracket shows its stop-loss, take-profit and the max loss at the stop)
-  plus the exact JSON for Alpaca's place_stock_order, records your yes word
+  plus the exact JSON for Alpaca's place_stock_order, Upstox's upstox_place_order,
+  or Zerodha's kite_place_order, records your yes word
   for word, then Claude's own Allow once / Deny card asks again. Builds the
   sell ticket that closes a day trade by your flat-by time, records fills,
   and logs each trade's max loss so trader-risk can hold the daily limit.
   Covers setting up Alpaca's official MCP server in Claude Desktop (paper by
-  default, keys in env vars, never in chat), the Interactive Brokers
-  connector, and setting order tools to "Needs approval". Use when the user
-  says "place the order", "buy it", "execute", "send it to my broker",
-  "close my position", "flatten", "get me out", "connect Alpaca", "set up
-  paper trading", or after /trader-risk passes.
+  default, keys in env vars, never in chat), Upstox API v2, Zerodha Kite Connect,
+  the Interactive Brokers connector, and setting order tools to "Needs approval".
+  Use when the user says "place the order", "buy it", "execute", "send it to my broker",
+  "close my position", "flatten", "get me out", "connect Alpaca", "connect Upstox",
+  "set up paper trading", or after /trader-risk passes.
 argument-hint: "[order number]"
 ---
 
@@ -135,6 +136,43 @@ submits orders directly to the market. So with IBKR the final yes happens in
 IBKR as well. Set `"broker": "ibkr"` in `trader/config.json`. Set its tools
 that draft orders to Needs approval too.
 
+## Setup C: Upstox & Indian Brokers (Upstox API v2 / Zerodha Kite)
+
+For Indian markets (NSE & BSE), `trader-broker` generates broker payloads formatted according to Upstox API v2 and Zerodha Kite Connect conventions:
+
+1. **Config example**: Set `"broker": "upstox"`, `"currency": "INR"`, `"exchange": "NSE_EQ"`, and `"product": "I"` (or `"MIS"` for Zerodha) in `trader/config.json` (see `trader-budget/config.upstox.example.json`).
+2. **Claude Desktop MCP Config**: Add the Upstox MCP server block in `claude_desktop_config.json` (see `claude_desktop_config.upstox.example.json`):
+```json
+{
+  "mcpServers": {
+    "upstox": {
+      "command": "uvx",
+      "args": ["upstox-mcp-server"],
+      "env": {
+        "UPSTOX_API_KEY": "YOUR_API_KEY_TYPED_HERE_NEVER_IN_CHAT",
+        "UPSTOX_API_SECRET": "YOUR_API_SECRET_TYPED_HERE_NEVER_IN_CHAT",
+        "UPSTOX_REDIRECT_URI": "https://127.0.0.1:5000/",
+        "UPSTOX_ACCESS_TOKEN": "YOUR_ACCESS_TOKEN_OR_AUTH_FLOW",
+        "UPSTOX_PAPER_TRADE": "true"
+      }
+    }
+  }
+}
+```
+3. **Tool Permissions**: Set `upstox_place_order` (and `kite_place_order`) to **Needs approval** in Claude Desktop / Claude Code.
+4. **Order Parameters**:
+   - `instrument_token`: e.g. `NSE_EQ|INE002A01018` or `NSE_EQ|RELIANCE`.
+   - `quantity`: Number of shares (integer).
+   - `product`: `I` (Intraday / MIS) or `D` (Delivery / CNC).
+   - `order_type`: `MARKET`, `LIMIT`, `SL` (Stop Loss Limit), `SL-M` (Stop Loss Market).
+   - `transaction_type`: `BUY` or `SELL`.
+   - `validity`: `DAY` (or `IOC`).
+   - `price`: Limit price (0.0 for MARKET orders).
+   - `trigger_price`: Trigger price for `SL` / `SL-M` orders.
+   - `is_amo`: After-market order flag (boolean).
+5. **Bracket / Protective Orders**: Indian exchanges do not provide native multi-leg bracket cancellation on regular equity orders. Upstox places the entry order; after fill, stop-loss and take-profit targets are set via GTT (Good-Till-Triggered) or OCO orders.
+6. **Intraday Square-off**: Intraday MIS (`I`) orders auto-square off by broker RMS around 15:15–15:25 IST. The flatten workflow (`ticket.py flatten`) defaults to `15:15 IST` for Indian markets.
+
 ## Steps: the entry
 
 1. `ticket.py show`. Only READY tickets go to the user. A ticket that is NOT
@@ -173,6 +211,7 @@ that draft orders to Needs approval too.
 
 ## Example: the reel
 
+### US Equities (Alpaca)
 ```
 ORDER 1 of 1, PAPER account, Alpaca
   BUY 8 TSLA, market, good for today
@@ -182,14 +221,49 @@ ORDER 1 of 1, PAPER account, Alpaca
   why: opening-range breakout on TSLA: 8 shares, bound by your $50 max loss per trade (8 x 5.86 = $46.88 at the stop)
   READY: trader-risk PASS, waiting for your yes
   Claude will call place_stock_order with exactly:
-    {"symbol": "TSLA", "side": "buy", "qty": "8", "type": "market", "time_in_force": "day",
-     "order_class": "bracket", "take_profit_limit_price": "370.04", "stop_loss_stop_price": "358.32"}
+    {
+      "symbol": "TSLA",
+      "side": "buy",
+      "qty": "8",
+      "type": "market",
+      "time_in_force": "day",
+      "order_class": "bracket",
+      "take_profit_limit_price": "370.04",
+      "stop_loss_stop_price": "358.32"
+    }
 ```
 
 The user replies "yes". Claude records it, calls `place_stock_order`, and the
 card reads "Claude wants to use Place stock order" with that JSON and two
 buttons: Allow once, Deny. Allow once sends it to the paper account. The
 `why` and the plan stay in the file; they are never sent.
+
+### Indian Equities (Upstox)
+```
+ORDER 1 of 1, PAPER account, Upstox
+  BUY 30 RELIANCE.NS (NSE_EQ, I), limit 2500.00, good for today
+  stop-loss 2470.00
+  take-profit 2560.00
+  max loss about ₹900.00 if the stop fills at 2470.00 (it can fill worse in a fast market)
+  why: break of opening high: 30 shares, bound by your ₹1,000 max loss per trade (30 x 30.00 = ₹900.00 at the stop)
+  READY: trader-risk PASS, waiting for your yes
+  Claude will call upstox_place_order with exactly:
+    {
+      "quantity": 30,
+      "product": "I",
+      "validity": "DAY",
+      "price": 2500.0,
+      "tag": "trading-skill",
+      "instrument_token": "NSE_EQ|RELIANCE",
+      "order_type": "LIMIT",
+      "transaction_type": "BUY",
+      "disclosed_quantity": 0,
+      "trigger_price": 0.0,
+      "is_amo": false
+    }
+  Upstox places the entry order. In paper mode or once filled, set the bracket
+  stop-loss and take-profit targets via GTT / OCO orders.
+```
 
 ## What it never does
 

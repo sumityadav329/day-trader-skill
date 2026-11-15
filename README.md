@@ -143,6 +143,46 @@ python3 trader-analyst/facts.py TSLA                                   # quarter
 python3 trader-pelosi/ptr.py index --member pelosi                     # her PTRs this year
 ```
 
+## Indian market support (NSE / BSE & Upstox)
+
+All 11 skills support the Indian stock market (NSE and BSE) and Indian brokers such as Upstox:
+
+```bash
+# Universe and scanning (Nifty 50, Nifty Bank, Nifty Next 50, Nifty 100, Nifty 500, F&O)
+python3 trader-scanner/scan.py universe --preset nifty50
+python3 trader-scanner/scan.py orb --preset nifty50 --market IN
+
+# News and corporate announcements (Moneycontrol, Economic Times, Livemint, NSE/BSE)
+python3 trader-news/news.py --tickers RELIANCE.NS,TCS.NS --market IN
+
+# Bar-by-bar entry and exit planning (IST session 09:15 to 15:30, 15:15 MIS cutoff)
+python3 trader-entry/entry.py check RELIANCE.NS --setup orb --market IN
+python3 trader-exit/exit.py plan --stop or-mid --target 1R --market IN --write
+
+# Indian session Time Machine (75 five-minute bars / 375 minutes per trading day)
+python3 trader-timemachine/timemachine.py run --market IN --write
+
+# Position sizing in INR (tick size 0.05, Indian Rupee ₹)
+python3 trader-budget/size.py --config trader-budget/config.upstox.example.json --write
+
+# Risk management with daily circuit bands (5%, 10%, 20%) and SEBI peak margin rules
+python3 trader-risk/check.py --market IN
+
+# Order execution ticket for Upstox API v2 and Indian brokers (MIS/CNC product types)
+python3 trader-broker/ticket.py show
+
+# Indian market alerts: 09:15 opening bell, 15:15 MIS auto-square-off alert, 15:30 close
+python3 trader-alerts/alerts.py clock --market IN
+python3 trader-alerts/alerts.py add --from-plan
+
+# Quarterly financial results under SEBI LODR Regulation 33 (in ₹ Crores)
+python3 trader-analyst/facts.py RELIANCE.NS --market IN
+
+# SEBI SAST, PIT Insider Trading disclosures, and NSE/BSE Bulk & Block Deals
+python3 trader-pelosi/ptr.py deals --symbol RELIANCE.NS
+python3 trader-pelosi/ptr.py insider --symbol RELIANCE.NS
+```
+
 ```bash
 python3 -m unittest discover -s tests -v
 ```

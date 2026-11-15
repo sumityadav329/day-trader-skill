@@ -101,6 +101,14 @@ Daylight saving time is worked out in the tool, so it needs no time zone
 files and ignores the computer's own zone. For any other year it says the
 holiday list is unknown.
 
+## Indian market clock (NSE/BSE)
+
+Regular session is 09:15 to 15:30 IST (Asia/Kolkata, UTC+05:30). Supports
+`--market IN` (or Indian symbols ending in `.NS` / `.BO`). Opening bell rings
+at 09:15 IST. Mandatory broker MIS auto-square-off alert triggers at 15:15 IST
+(via `--square-off` or `add --from-plan`). Quotes and price alerts format in
+INR (₹). Holiday calendar tracks NSE/BSE holidays for 2026 and 2027.
+
 ## Steps
 
 1. Right after trader-exit writes the plan, run `add --from-plan`. Confirm

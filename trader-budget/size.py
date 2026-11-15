@@ -92,7 +92,10 @@ class SizeError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- time (New York, no tz files)
+# ---------------------------------------------------------------- time (New York & India, no tz files)
+
+IST_OFFSET = datetime.timedelta(hours=5, minutes=30)
+
 
 def _nth_sunday(year, month, n):
     d = datetime.date(year, month, 1)
@@ -123,17 +126,65 @@ def eastern_to_utc(local):
     return local + datetime.timedelta(hours=5)
 
 
-def parse_now(text):
-    """ISO time -> naive UTC. A time without an offset is taken as New York time."""
+def to_ist(utc):
+    """UTC -> IST (Asia/Kolkata, UTC+05:30). Fixed offset, no DST."""
+    return utc.replace(tzinfo=None) + IST_OFFSET
+
+
+def ist_to_utc(local):
+    """IST -> naive UTC."""
+    return local.replace(tzinfo=None) - IST_OFFSET
+
+
+def is_indian_symbol(symbol):
+    if not symbol:
+        return False
+    s = str(symbol).strip().upper()
+    if s.endswith(".NS") or s.endswith(".BO"):
+        return True
+    if s.startswith("NSE:") or s.startswith("BSE:"):
+        return True
+    if s.startswith("NSE_EQ|") or s.startswith("BSE_EQ|"):
+        return True
+    return False
+
+
+def is_indian_market(cfg=None, plan=None, symbol=None):
+    if symbol and is_indian_symbol(symbol):
+        return True
+    for obj in (plan, cfg):
+        if not isinstance(obj, dict):
+            continue
+        sym = obj.get("symbol") or obj.get("ticker")
+        if sym and is_indian_symbol(sym):
+            return True
+        curr = str(obj.get("currency") or "").upper()
+        if curr in ("INR", "₹", "RS", "RUPEES"):
+            return True
+        mkt = str(obj.get("market") or "").upper()
+        if mkt in ("IN", "INDIA", "NSE", "BSE"):
+            return True
+        exch = str(obj.get("exchange") or "").upper()
+        if exch in ("NSE_EQ", "BSE_EQ", "NSE_FO", "BSE_FO", "NSE", "BSE"):
+            return True
+        brk = str(obj.get("broker") or "").lower()
+        if brk in ("upstox", "zerodha", "kite"):
+            return True
+    return False
+
+
+def parse_now(text, is_in=False):
+    """ISO time -> naive UTC. A time without an offset is taken as local market time (IST if Indian, else New York)."""
     if not text:
         return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0, tzinfo=None)
     t = text.strip().replace("Z", "+00:00")
     try:
         dt = datetime.datetime.fromisoformat(t)
     except ValueError:
-        raise SizeError("--now wants a time like \"2026-10-19 10:15\" (New York) or ...Z (UTC)")
+        lbl = "IST / New York" if is_in else "New York"
+        raise SizeError("--now wants a time like \"2026-10-19 10:15\" (%s) or ...Z (UTC)" % lbl)
     if dt.tzinfo is None:
-        return eastern_to_utc(dt)
+        return ist_to_utc(dt) if is_in else eastern_to_utc(dt)
     return (dt - dt.utcoffset()).replace(tzinfo=None)
 
 
@@ -267,37 +318,48 @@ def fresh_price(doc, sym, now_utc, minutes=FRESH_MINUTES):
 
 # ---------------------------------------------------------------- money helpers
 
-def round_cent(x):
-    """Round a price to the cent (half up)."""
+def round_tick(x, tick=0.01):
+    """Round a price to the tick (half up). 0.01 for US, 0.05 for NSE equities."""
+    if not tick or tick <= 0:
+        tick = 0.01
+    return round(math.floor(float(x) / tick + 0.5 + EPS) * tick, 4)
+
+
+def round_cent(x, tick=0.01):
+    """Round a price to the cent or tick (half up)."""
+    if tick and tick != 0.01:
+        return round_tick(x, tick)
     return math.floor(float(x) * 100 + 0.5 + EPS) / 100.0
 
 
 def shares_for(usd, per_share):
-    """Whole shares that fit in usd at per_share, in exact integer cents."""
+    """Whole shares that fit in usd / inr at per_share, in exact integer cents / paise."""
     u, p = int(round(float(usd) * 100)), int(round(float(per_share) * 100))
     if p <= 0 or u <= 0:
         return 0
     return u // p
 
 
-def _price(x):
-    """358.32 -> "358.32": Alpaca wants prices as strings."""
-    return "%.2f" % round_cent(x)
+def _price(x, tick=0.01):
+    """358.32 -> "358.32": Alpaca/broker prices as strings."""
+    return "%.2f" % round_cent(x, tick)
 
 
 def _num(x):
-    """1250 -> "1250", 1118.13 -> "1118.13" (Alpaca wants these as strings)."""
+    """1250 -> "1250", 1118.13 -> "1118.13"."""
     x = round(float(x), 2)
     if abs(x - round(x)) < 0.005:
         return str(int(round(x)))
     return "%.2f" % x
 
 
-def money(x):
+def money(x, currency="USD"):
     x = float(x)
+    cur = str(currency or "USD").upper()
+    sym = "₹" if cur in ("INR", "₹", "RS", "RUPEES") else "$"
     if abs(x - round(x)) < 0.005:
-        return "$" + "{:,.0f}".format(round(x))
-    return "$" + "{:,.2f}".format(x)
+        return sym + "{:,.0f}".format(round(x))
+    return sym + "{:,.2f}".format(x)
 
 
 # ---------------------------------------------------------------- plan mode (the default)
@@ -308,7 +370,7 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     limit  the limit price for a limit order (None = market)
     price  a FRESH latest price; a market order is sized at the higher of it and the plan's entry
     cash   the cash in trader/portfolio.json, if there is one
-    today  New York date (YYYY-MM-DD); a plan for another day is refused"""
+    today  Local date (YYYY-MM-DD); a plan for another day is refused"""
     c = dict(DEFAULTS)
     c.update(cfg or {})
     if not isinstance(plan, dict):
@@ -319,16 +381,24 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     side = str(plan.get("side") or "buy").strip().lower()
     if side != "buy":
         raise SizeError("this pack sizes long (buy) day trades only; the plan says %r" % side)
+
+    is_in = is_indian_market(c, plan, sym)
+    currency = "INR" if is_in else "USD"
+    tick = float(c.get("tick_size") or (0.05 if is_in else 0.01))
+    exchange = plan.get("exchange") or c.get("exchange") or ("BSE_EQ" if ".BO" in sym else ("NSE_EQ" if is_in else None))
+    product = plan.get("product") or c.get("product") or ("I" if is_in else None)
+
     if today and plan.get("date") and str(plan["date"]) != today:
-        raise SizeError("the plan is for %s and today is %s in New York: make a new plan with trader-exit"
-                        % (plan["date"], today))
+        tz_name = "India (IST)" if is_in else "New York"
+        raise SizeError("the plan is for %s and today is %s in %s: make a new plan with trader-exit"
+                        % (plan["date"], today, tz_name))
     entry_plan, stop, target = _f(plan.get("entry")), _f(plan.get("stop")), _f(plan.get("target"))
     for name, v in (("entry", entry_plan), ("stop", stop), ("target", target)):
         if v is None or v <= 0:
             raise SizeError("the plan needs a positive %s (run trader-exit); a bracket order needs entry, "
                             "stop and target" % name)
     blocked = {str(b).upper() for b in (c.get("blocked") or [])}
-    if sym in blocked:
+    if sym in blocked or sym.replace(".NS", "").replace(".BO", "") in blocked:
         raise SizeError("%s is on your blocked list" % sym)
 
     budget = float(budget if budget is not None else (c.get("budget") or 0))
@@ -339,46 +409,46 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         raise SizeError("cash_buffer_pct must be between 0 and 100")
 
     if limit is not None:
-        ref, ref_from = round_cent(limit), "limit"
-    elif price is not None and round_cent(price) > round_cent(entry_plan):
-        ref, ref_from = round_cent(price), "price"
+        ref, ref_from = round_cent(limit, tick), "limit"
+    elif price is not None and round_cent(price, tick) > round_cent(entry_plan, tick):
+        ref, ref_from = round_cent(price, tick), "price"
     else:
-        ref, ref_from = round_cent(entry_plan), "plan"
-    stop, target = round_cent(stop), round_cent(target)
+        ref, ref_from = round_cent(entry_plan, tick), "plan"
+    stop, target = round_cent(stop, tick), round_cent(target, tick)
     if stop >= ref:
         raise SizeError("the stop %s is not below the entry %s; a long trade needs its stop underneath"
-                        % (_price(stop), _price(ref)))
+                        % (_price(stop, tick), _price(ref, tick)))
     if target <= ref:
         raise SizeError("the target %s is not above the entry %s: the move has already happened. "
-                        "Skip it or make a new plan with trader-exit" % (_price(target), _price(ref)))
+                        "Skip it or make a new plan with trader-exit" % (_price(target, tick), _price(ref, tick)))
     risk_c = int(round((ref - stop) * 100))
     reward_c = int(round((target - ref) * 100))
     risk = risk_c / 100.0
 
     cash_buffer = round(budget * buf_pct / 100.0, 2)
     available = budget - cash_buffer
-    cash_note = "budget %s minus the %s cash buffer" % (money(budget), money(cash_buffer))
+    cash_note = "budget %s minus the %s cash buffer" % (money(budget, currency), money(cash_buffer, currency))
     if cash is not None and cash - cash_buffer < available - 0.005:
         available = cash - cash_buffer
-        cash_note = "cash %s in trader/portfolio.json minus the %s buffer" % (money(cash), money(cash_buffer))
+        cash_note = "cash %s in trader/portfolio.json minus the %s buffer" % (money(cash, currency), money(cash_buffer, currency))
     available = max(round(available, 2), 0.0)
 
     limits = []
-    max_loss = _f(c.get("max_loss_per_trade_usd"))
+    max_loss = _f(c.get("max_loss_per_trade_inr")) if (is_in and c.get("max_loss_per_trade_inr") is not None) else (_f(c.get("max_loss_per_trade")) or _f(c.get("max_loss_per_trade_usd")))
     if max_loss:
         limits.append({"name": "max loss", "usd": max_loss, "per": risk, "shares": shares_for(max_loss, risk),
-                       "how": "%s max loss / %s risk a share" % (money(max_loss), _price(risk))})
+                       "how": "%s max loss / %s risk a share" % (money(max_loss, currency), _price(risk, tick))})
     cap_pct = _f(c.get("max_position_pct"))
     if cap_pct:
         cap = round(budget * cap_pct / 100.0, 2)
         limits.append({"name": "position cap", "usd": cap, "per": ref, "shares": shares_for(cap, ref),
-                       "how": "%s%% of %s = %s / %s" % (_num(cap_pct), money(budget), money(cap), _price(ref))})
-    max_order = _f(c.get("max_order_usd"))
+                       "how": "%s%% of %s = %s / %s" % (_num(cap_pct), money(budget, currency), money(cap, currency), _price(ref, tick))})
+    max_order = _f(c.get("max_order_inr")) if (is_in and c.get("max_order_inr") is not None) else (_f(c.get("max_order")) or _f(c.get("max_order_usd")))
     if max_order:
         limits.append({"name": "max order", "usd": max_order, "per": ref, "shares": shares_for(max_order, ref),
-                       "how": "%s / %s" % (money(max_order), _price(ref))})
+                       "how": "%s / %s" % (money(max_order, currency), _price(ref, tick))})
     limits.append({"name": "cash", "usd": available, "per": ref, "shares": shares_for(available, ref),
-                   "how": "%s = %s / %s" % (cash_note, money(available), _price(ref))})
+                   "how": "%s = %s / %s" % (cash_note, money(available, currency), _price(ref, tick))})
 
     qty = max(0, min(l["shares"] for l in limits))
     bound = [l["name"] for l in limits if l["shares"] == qty]
@@ -387,74 +457,92 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     cost = round(qty * ref, 2)
     loss = round(qty * risk_c / 100.0, 2)
     refusal = None
+    min_order = _f(c.get("min_order_inr")) if (is_in and c.get("min_order_inr") is not None) else (_f(c.get("min_order")) or _f(c.get("min_order_usd"))) or 0.0
     if qty == 0:
         if bound[0] == "max loss":
             refusal = ("one share risks %s (entry %s minus stop %s), more than your %s max loss per trade. "
                        "No order. Skip this trade, or plan a closer stop with trader-exit."
-                       % (money(risk), _price(ref), _price(stop), money(max_loss)))
+                       % (money(risk, currency), _price(ref, tick), _price(stop, tick), money(max_loss, currency)))
         else:
             refusal = ("one share of %s costs %s, more than your %s limit (%s). No order."
-                       % (sym, money(ref), bound[0], limits[[l["name"] for l in limits].index(bound[0])]["how"]))
+                       % (sym, money(ref, currency), bound[0], limits[[l["name"] for l in limits].index(bound[0])]["how"]))
     elif _f(c.get("min_reward_risk")) and reward_c < _f(c["min_reward_risk"]) * risk_c - EPS:
         refusal = ("reward:risk %.2f (target %s, entry %s, stop %s) is under your minimum %s, so trader-risk "
                    "would block it. No order. Skip it, or make a new plan with trader-exit."
-                   % (reward_c / float(risk_c), _price(target), _price(ref), _price(stop), _num(c["min_reward_risk"])))
-    elif cost < float(c.get("min_order_usd") or 0) - 0.005:
+                   % (reward_c / float(risk_c), _price(target, tick), _price(ref, tick), _price(stop, tick), _num(c["min_reward_risk"])))
+    elif cost < min_order - 0.005:
         refusal = ("%d share%s of %s is %s, under your %s minimum order. No order."
-                   % (qty, "" if qty == 1 else "s", sym, money(cost), money(c["min_order_usd"])))
-    return {
+                   % (qty, "" if qty == 1 else "s", sym, money(cost, currency), money(min_order, currency)))
+
+    flat_by = plan.get("flat_by") or c.get("flat_by") or ("15:15" if is_in else "15:55")
+    ret = {
         "symbol": sym, "side": "buy", "setup": plan.get("setup", ""), "date": plan.get("date"),
-        "entry_time": plan.get("entry_time", ""), "entry_plan": round_cent(entry_plan),
+        "entry_time": plan.get("entry_time", ""), "entry_plan": round_cent(entry_plan, tick),
         "entry": ref, "entry_from": ref_from, "stop": stop, "target": target,
         "risk_per_share": risk, "reward_risk": round(reward_c / float(risk_c), 2),
         "stop_label": plan.get("stop_label", ""), "target_label": plan.get("target_label", ""),
         "budget": budget, "cash_buffer_pct": buf_pct, "cash_buffer": cash_buffer, "cash_available": available,
         "max_loss_per_trade_usd": max_loss, "limits": limits, "qty": qty, "bound_by": bound[0],
-        "cost": cost, "max_loss": loss, "flat_by": plan.get("flat_by") or c.get("flat_by"),
+        "cost": cost, "max_loss": loss, "flat_by": flat_by,
         "order_type": "limit" if limit is not None else "market", "refusal": refusal,
+        "currency": currency, "tick_size": tick, "is_indian": is_in,
     }
+    if is_in:
+        ret["exchange"] = exchange
+        ret["product"] = product
+    return ret
 
 
 def bracket_order(s):
-    """The one proposed order, Alpaca place_stock_order fields (strings) plus why and plan."""
+    """The one proposed order, Alpaca place_stock_order fields (strings) or Indian broker fields plus why and plan."""
     if s["refusal"] or s["qty"] <= 0:
         return None
+    tick = s.get("tick_size") or 0.01
+    currency = s.get("currency", "USD")
     o = {"symbol": s["symbol"], "side": "buy", "qty": str(int(s["qty"])), "type": s["order_type"],
          "time_in_force": "day"}
     if s["order_type"] == "limit":
-        o["limit_price"] = _price(s["entry"])
+        o["limit_price"] = _price(s["entry"], tick)
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "day trade")
     why = ("%s on %s: %d shares, bound by your %s (%d x %s = %s at the stop)"
-           % (setup, s["symbol"], s["qty"], {"max loss": "%s max loss per trade" % money(s["max_loss_per_trade_usd"] or 0),
+           % (setup, s["symbol"], s["qty"], {"max loss": "%s max loss per trade" % money(s["max_loss_per_trade_usd"] or 0, currency),
                                              "position cap": "position cap", "max order": "max order",
                                              "cash": "cash after the buffer"}[s["bound_by"]],
-              s["qty"], _price(s["risk_per_share"]), money(s["max_loss"])))
+              s["qty"], _price(s["risk_per_share"], tick), money(s["max_loss"], currency)))
     o.update({
         "order_class": "bracket",
-        "take_profit_limit_price": _price(s["target"]),
-        "stop_loss_stop_price": _price(s["stop"]),
+        "take_profit_limit_price": _price(s["target"], tick),
+        "stop_loss_stop_price": _price(s["stop"], tick),
         "why": why,
         "plan": {"entry": s["entry"], "stop": s["stop"], "target": s["target"],
                  "risk_per_share": s["risk_per_share"], "max_loss": s["max_loss"], "setup": s["setup"],
                  "entry_time": s["entry_time"], "flat_by": s["flat_by"]},
     })
+    if s.get("is_indian"):
+        o["exchange"] = s.get("exchange", "NSE_EQ")
+        o["product"] = s.get("product", "I")
+        o["currency"] = "INR"
+        clean_sym = s["symbol"].replace(".NS", "").replace(".BO", "")
+        o["instrument_token"] = f"{o['exchange']}|{clean_sym}"
     return o
 
 
 def plan_report(s, order, notes=()):
     lines = []
+    tick = s.get("tick_size") or 0.01
+    currency = s.get("currency", "USD")
     setup = SETUP_WORDS.get(s["setup"], s["setup"] or "setup")
-    lines.append("%s buy, %s, entry %s%s" % (s["symbol"], setup, _price(s["entry_plan"]),
+    lines.append("%s buy, %s, entry %s%s" % (s["symbol"], setup, _price(s["entry_plan"], tick),
                                             (" at " + s["entry_time"]) if s["entry_time"] else ""))
-    lines.append("Stop %s%s. Target %s%s." % (_price(s["stop"]), (": " + s["stop_label"]) if s["stop_label"] else "",
-                                             _price(s["target"]),
+    lines.append("Stop %s%s. Target %s%s." % (_price(s["stop"], tick), (": " + s["stop_label"]) if s["stop_label"] else "",
+                                             _price(s["target"], tick),
                                              (": " + s["target_label"]) if s["target_label"] else ""))
     for n in notes:
         lines.append(n)
     src = {"plan": "the plan's entry", "price": "the latest price, above the plan's entry",
            "limit": "your limit price"}[s["entry_from"]]
     lines.append("Sized at %s (%s). Risk %s a share (entry %s minus stop %s). Reward:risk %.2f."
-                 % (_price(s["entry"]), src, _price(s["risk_per_share"]), _price(s["entry"]), _price(s["stop"]),
+                 % (_price(s["entry"], tick), src, _price(s["risk_per_share"], tick), _price(s["entry"], tick), _price(s["stop"], tick),
                     s["reward_risk"]))
     lines.append("")
     lines.append("Limits (whole shares; the smallest one wins):")
@@ -467,9 +555,9 @@ def plan_report(s, order, notes=()):
         lines.append("Education and tooling, not financial advice.")
         return "\n".join(lines)
     lines.append("Size: %d shares of %s = %s at %s. Max loss at the stop: %d x %s = %s."
-                 % (s["qty"], s["symbol"], money(s["cost"]), _price(s["entry"]), s["qty"],
-                    _price(s["risk_per_share"]), money(s["max_loss"])))
-    lines.append("A stop is an order, not a promise: in a fast market it can fill below %s." % _price(s["stop"]))
+                 % (s["qty"], s["symbol"], money(s["cost"], currency), _price(s["entry"], tick), s["qty"],
+                    _price(s["risk_per_share"], tick), money(s["max_loss"], currency)))
+    lines.append("A stop is an order, not a promise: in a fast market it can fill below %s." % _price(s["stop"], tick))
     lines.append("")
     lines.append("Proposed bracket order (place_stock_order arguments, nothing has been placed):")
     how = "limit %s" % order["limit_price"] if order["type"] == "limit" else "market"
@@ -477,8 +565,9 @@ def plan_report(s, order, notes=()):
                  % (order["qty"], order["symbol"], how, order["take_profit_limit_price"],
                     order["stop_loss_stop_price"]))
     if s["flat_by"]:
-        lines.append("Flat by %s New York: anything still open then gets closed (trader-alerts rings, "
-                     "trader-broker flatten)." % s["flat_by"])
+        tz_name = "India (IST)" if s.get("is_indian") else "New York"
+        lines.append("Flat by %s %s: anything still open then gets closed (trader-alerts rings, "
+                     "trader-broker flatten)." % (s["flat_by"], tz_name))
     lines.append("")
     lines.append("Next: trader-risk checks it, then trader-broker asks you yes or no.")
     lines.append("Education and tooling, not financial advice.")
@@ -773,9 +862,11 @@ def write_orders(path, orders, cfg, source="", now_utc=None):
 # ---------------------------------------------------------------- main
 
 def run_plan(a, cfg):
-    now = parse_now(a.now)
-    today = to_eastern(now).date().isoformat()
     plan = read_json(a.plan, "plan (run trader-exit first, or use --weights for a split)")
+    sym = str((plan or {}).get("symbol") or "").upper()
+    is_in = is_indian_market(cfg, plan, symbol=sym)
+    now = parse_now(a.now, is_in=is_in)
+    today = to_ist(now).date().isoformat() if is_in else to_eastern(now).date().isoformat()
     limit = None
     if a.limit is not None:
         if a.limit == "plan":
@@ -784,21 +875,23 @@ def run_plan(a, cfg):
             limit = _f(a.limit)
             if limit is None or limit <= 0:
                 raise SizeError("--limit wants a price, like --limit 364.00")
-    sym = str((plan or {}).get("symbol") or "").upper()
     notes, price = [], None
+    tick = float((cfg or {}).get("tick_size") or (0.05 if is_in else 0.01))
+    tz_label = "IST" if is_in else "New York"
+    to_tz = to_ist if is_in else to_eastern
     ppath = a.prices or ("trader/prices.json" if os.path.exists("trader/prices.json") else None)
     if ppath and limit is None and sym:
         pdoc = read_json(ppath, "prices")
         p, t, fresh = fresh_price(pdoc, sym, now)
         if p is not None and fresh:
             price = p
-            if round_cent(p) > round_cent(_f(plan.get("entry")) or 0):
-                notes.append("%s last %s (as of %s New York) is above the plan's entry %s, so the risk "
-                             "is bigger: sized at %s." % (sym, _price(p), to_eastern(t).strftime("%H:%M"),
-                                                          _price(plan.get("entry")), _price(p)))
+            if round_cent(p, tick) > round_cent(_f(plan.get("entry")) or 0, tick):
+                notes.append("%s last %s (as of %s %s) is above the plan's entry %s, so the risk "
+                             "is bigger: sized at %s." % (sym, _price(p, tick), to_tz(t).strftime("%H:%M"),
+                                                          tz_label, _price(plan.get("entry"), tick), _price(p, tick)))
         elif p is not None:
             notes.append("%s in %s is %s: not used (older than %d minutes). Sized at the plan's entry."
-                         % (sym, ppath, ("from " + to_eastern(t).strftime("%Y-%m-%d %H:%M") + " New York")
+                         % (sym, ppath, ("from " + to_tz(t).strftime("%Y-%m-%d %H:%M") + " " + tz_label)
                             if t else "undated", FRESH_MINUTES))
     cash = None
     if a.portfolio and os.path.exists(a.portfolio):

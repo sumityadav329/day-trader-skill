@@ -54,14 +54,15 @@ If `trader/config.json` does not exist, copy `config.example.json` into
 
 - **budget**: how much money this is for. Only money they can afford to lose.
 - **cash_buffer_pct**: how much always stays in cash (default 10).
-- **max_loss_per_trade_usd**: the most one trade may lose if the stop fills at the stop (default 50).
-- **max_position_pct**, **max_order_usd**, **min_order_usd**: the biggest position (75% of the
-  budget), the biggest order ($4,000) and the smallest order ($5).
-- The day limits trader-risk enforces: **max_daily_loss_usd** (150), **max_trades_per_day** (3),
+- **max_loss_per_trade_usd** (or **max_loss_per_trade_inr** for Indian market): the most one trade may lose if the stop fills at the stop (default $50 / ₹1,000).
+- **max_position_pct**, **max_order_usd** / **max_order_inr**, **min_order_usd** / **min_order_inr**: position caps and order limits.
+- The day limits trader-risk enforces: **max_daily_loss_usd** / **max_daily_loss_inr**, **max_trades_per_day** (3),
   **min_reward_risk** (1.0), **require_stop** (true), **no_entries_before** / **no_entries_after**
-  ("09:45" / "15:30") and **flat_by** ("15:55"), all New York time.
+  ("09:45" / "15:30" US ET, or "09:15" / "15:00" IST for India) and **flat_by** ("15:55" US, or "15:15" IST for intraday MIS square-off).
 - **blocked**: tickers they never want to trade.
 - Keep **paper** true until they have watched it work on a paper account.
+
+For Indian market trading with Upstox or Zerodha, copy `config.upstox.example.json` instead, which configures INR currency (`₹`), NSE equity tick size (0.05 INR), Indian market session times (09:15–15:30 IST), intraday MIS square-off cutoff (15:15 IST), and Upstox broker settings.
 
 ## Step 2: size the trade
 

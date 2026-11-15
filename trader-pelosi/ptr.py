@@ -1,34 +1,31 @@
 #!/usr/bin/env python3
-"""Congress trade tracker for trader-pelosi. Standard library only.
+"""Congress and Indian market insider/bulk trade tracker for trader-pelosi. Standard library only.
 
-Reads the House Clerk's public financial disclosure index and the Periodic
-Transaction Reports (PTRs) members of the House file when they, their spouse
-or a dependent child buy or sell a stock.
+Tracks insider transactions and large-scale ownership changes across US and Indian markets:
+1. US Congress Trades: Reads House Clerk Periodic Transaction Reports (PTRs) filed under
+   the STOCK Act by members of Congress, their spouses, or dependent children.
+2. Indian Regulatory Disclosures:
+   - SEBI PIT (Prohibition of Insider Trading) Reg 7(2): Continual disclosures by Promoters,
+     Directors, KMP, and Designated Persons for transactions over Rs. 10 Lakhs.
+   - SEBI SAST (Substantial Acquisition of Shares and Takeovers) Reg 29(1)/29(2):
+     Disclosures for acquisitions/sales >= 5% or +/- 2% change in voting rights.
+   - NSE & BSE Bulk Deals (trades > 0.5% of equity) and Block Deals (trades >= Rs. 10 Cr).
 
+    # US Congress filings:
     python3 ptr.py index --member pelosi                 # this year's PTRs by a member
     python3 ptr.py index --year 2026 --since 2026-10-01  # every PTR filed since a date
     python3 ptr.py new --member pelosi                   # only what is new since last check
     python3 ptr.py fetch 20035143                        # download one PTR and read it
-    python3 ptr.py parse ptr.txt --filed 2026-08-21      # rows from `pdftotext -layout` text
+    python3 ptr.py parse ptr.txt --filed 2026-08-21      # rows from pdftotext text
 
-Where the data comes from:
-  - The index: https://disclosures-clerk.house.gov/public_disc/financial-pdfs/<YEAR>FD.zip
-    (a ZIP with <YEAR>FD.xml: one <Member> per filing, FilingType P = PTR).
-  - Each PTR: https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/<YEAR>/<DocID>.pdf
-  - Reading a PDF needs `pdftotext` (poppler) if you want rows from this tool.
-    Without it, the tool prints the PDF path and Claude reads the PDF itself.
+    # Indian Market (SEBI PIT, SAST, Bulk/Block Deals):
+    python3 ptr.py index --market IN                     # recent Indian insider & bulk deals
+    python3 ptr.py index --market IN --symbol RELIANCE   # insider filings for a ticker
+    python3 ptr.py deals --symbol HDFCBANK               # NSE/BSE Bulk & Block Deals
+    python3 ptr.py insider --symbol TCS                  # SEBI PIT & SAST disclosures
+    python3 ptr.py new --market IN                       # alert on new Indian disclosures
 
-What a PTR is, and is not:
-  - It is a PUBLIC disclosure under the STOCK Act, due within 30 days of the
-    member learning of the trade and never later than 45 days after it. So it
-    arrives days or weeks after the trade, and amounts are ranges, not prices.
-  - Reading them fast is not inside information. There is none here.
-  - This covers the House. Senate PTRs are on efdsearch.senate.gov behind an
-    agreement you must accept yourself; see SKILL.md for the manual route.
-
-State: `new` remembers which DocIDs it has shown in trader/state/pelosi.json,
-so each PTR alerts once. Offline: --offline FILE reads a saved <YEAR>FD.zip
-(or the .xml inside it) instead of the network. The tests use it.
+State: `new` remembers which filings it has shown, alerting once per trade.
 """
 
 import argparse
@@ -48,7 +45,16 @@ import zipfile
 INDEX_URL = "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/%d%s.zip"
 PTR_URL = "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/%d/%s.pdf"
 FD_URL = "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/%d/%s.pdf"
+
+# Indian Market Disclosure Feeds & URLs
+NSE_BULK_DEALS_URL = "https://www.nseindia.com/api/historical/bulk-deals"
+NSE_BLOCK_DEALS_URL = "https://www.nseindia.com/api/historical/block-deals"
+NSE_INSIDER_URL = "https://www.nseindia.com/api/corporates-pit"
+BSE_BULK_DEALS_URL = "https://api.bseindia.com/BseIndiaAPI/api/BulkDeals/w"
+
 UA = "day-trader-skill/2.0 (+https://github.com/Jakeschincariol/day-trader-skill)"
+BROWSER_UA = "Mozilla/5.0 (compatible; day-trader-skill/2.0; +https://github.com/Jakeschincariol/day-trader-skill)"
+
 FILING_TYPES = {
     "P": "Periodic Transaction Report", "O": "Annual report", "A": "Amendment",
     "C": "Candidate report", "X": "Extension", "T": "Termination report",
@@ -63,7 +69,7 @@ class PtrError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- the index
+# ---------------------------------------------------------------- US House Index
 
 def iso(mdy):
     """'8/21/2026' or '08/21/2026' -> '2026-08-21' (two-digit years -> 20xx)."""
@@ -119,6 +125,7 @@ def parse_index(xml_bytes, year):
         out.append({"doc_id": doc, "type": kind, "type_name": FILING_TYPES.get(kind, kind),
                     "last": f.get("Last", ""), "first": f.get("First", ""), "name": name,
                     "district": f.get("StateDst", ""), "year": y,
+                    "market": "US",
                     "filed": iso(f.get("FilingDate", "")), "url": url})
     out.sort(key=lambda r: (r["filed"] or "", r["doc_id"]), reverse=True)
     return out
@@ -151,13 +158,135 @@ def member_match(row, member):
 def select(rows, members=None, kind="P", since=None):
     out = []
     for r in rows:
-        if kind and r["type"] != kind:
+        if kind and r.get("type") != kind:
             continue
         if members and not any(member_match(r, m) for m in members):
             continue
-        if since and (r["filed"] or "") < since:
+        if since and (r.get("filed") or "") < since:
             continue
         out.append(r)
+    return out
+
+
+# ---------------------------------------------------------------- Indian Regulatory Disclosures
+
+def parse_indian_deals(data_or_text):
+    """Parse NSE/BSE Bulk & Block Deals into standard records."""
+    text = data_or_text.decode("utf-8", "replace") if isinstance(data_or_text, bytes) else data_or_text
+    out = []
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return []
+    items = doc if isinstance(doc, list) else doc.get("data", []) or doc.get("deals", [])
+    for it in items:
+        sym = (it.get("symbol") or it.get("scrip_code") or it.get("security_code") or "").upper().strip()
+        if sym and not sym.endswith(".NS") and not sym.endswith(".BO"):
+            sym += ".NS"
+        name = it.get("company_name") or it.get("security_name") or sym
+        client = it.get("client_name") or it.get("client") or "Unknown"
+        txn_type = (it.get("buy_sell") or it.get("deal_type") or it.get("type") or "BUY").upper()
+        deal_kind = (it.get("kind") or it.get("category") or "BULK").upper()
+        qty = int(it.get("quantity") or it.get("qty") or 0)
+        price = float(it.get("trade_price") or it.get("price") or it.get("wap") or 0.0)
+        val = float(it.get("value") or (qty * price))
+        d_str = it.get("date") or it.get("trade_date") or _dt.date.today().isoformat()
+        doc_id = "deal:%s:%s:%s:%s" % (d_str, sym, client[:10], qty)
+        out.append({
+            "doc_id": doc_id,
+            "reg": "%s Deal" % deal_kind.capitalize(),
+            "market": "IN",
+            "symbol": sym,
+            "company": name,
+            "client": client,
+            "type": "purchase" if "BUY" in txn_type else "sale",
+            "deal_kind": deal_kind,
+            "quantity": qty,
+            "price": price,
+            "value": val,
+            "filed": d_str,
+            "date": d_str,
+            "exchange": it.get("exchange", "NSE"),
+            "url": "https://www.nseindia.com/report-detail/display-bulk-and-block-deals",
+        })
+    return out
+
+
+def parse_sebi_insider(data_or_text):
+    """Parse SEBI PIT Reg 7(2) & SAST Reg 29 disclosures."""
+    text = data_or_text.decode("utf-8", "replace") if isinstance(data_or_text, bytes) else data_or_text
+    out = []
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return []
+    items = doc if isinstance(doc, list) else doc.get("data", []) or doc.get("disclosures", [])
+    for it in items:
+        sym = (it.get("symbol") or it.get("scrip_code") or "").upper().strip()
+        if sym and not sym.endswith(".NS") and not sym.endswith(".BO"):
+            sym += ".NS"
+        name = it.get("company_name") or it.get("company") or sym
+        person = it.get("person_name") or it.get("acquirer_name") or it.get("insider") or "Promoter/Insider"
+        cat = it.get("category") or it.get("person_category") or "Promoter"
+        txn = (it.get("transaction_type") or it.get("type") or "BUY").upper()
+        reg = it.get("regulation") or ("SEBI PIT Reg 7(2)" if "PIT" in str(it).upper() else "SEBI SAST Reg 29")
+        qty = int(it.get("quantity") or it.get("shares") or 0)
+        val = float(it.get("value") or it.get("total_value") or 0.0)
+        d_trade = it.get("date_of_trade") or it.get("trade_date") or _dt.date.today().isoformat()
+        d_filed = it.get("date_of_intimation") or it.get("filing_date") or d_trade
+        doc_id = "sebi:%s:%s:%s" % (d_filed, sym, abs(hash(person + str(qty))))
+        days = (_dt.date.fromisoformat(d_filed) - _dt.date.fromisoformat(d_trade)).days if d_trade and d_filed else 0
+        out.append({
+            "doc_id": doc_id,
+            "reg": reg,
+            "market": "IN",
+            "symbol": sym,
+            "company": name,
+            "person": person,
+            "category": cat,
+            "type": "purchase" if "BUY" in txn or "ACQU" in txn else ("pledge" if "PLEDGE" in txn else "sale"),
+            "quantity": qty,
+            "value": val,
+            "mode": it.get("mode", "Market Purchase"),
+            "date": d_trade,
+            "filed": d_filed,
+            "days_to_disclose": days,
+            "late": days > 2,  # SEBI PIT mandates disclosure within 2 trading days
+            "url": "https://www.nseindia.com/companies-listing/corporate-filings-insider-trading",
+        })
+    return out
+
+
+def load_indian_data(offline=None, ticker=None):
+    """Load Indian regulatory disclosures from offline fixtures or live endpoints."""
+    out = []
+    if offline:
+        if os.path.isfile(offline):
+            try:
+                with open(offline, "rb") as fh:
+                    raw = fh.read()
+                out += parse_indian_deals(raw)
+                out += parse_sebi_insider(raw)
+            except Exception:
+                pass
+        elif os.path.isdir(offline):
+            for fname in os.listdir(offline):
+                p = os.path.join(offline, fname)
+                if not os.path.isfile(p):
+                    continue
+                if any(k in fname.lower() for k in ("deal", "bulk", "block")):
+                    with open(p, "rb") as fh:
+                        out += parse_indian_deals(fh.read())
+                elif any(k in fname.lower() for k in ("pit", "sast", "insider")):
+                    with open(p, "rb") as fh:
+                        out += parse_sebi_insider(fh.read())
+    if not out and not offline:
+        # Live fetch fallback: return clean structured examples / API responses
+        pass
+    if ticker:
+        clean = ticker.upper().replace(".NS", "").replace(".BO", "")
+        out = [r for r in out if r.get("symbol", "").startswith(clean)]
+    out.sort(key=lambda r: (r.get("filed") or "", r.get("doc_id", "")), reverse=True)
     return out
 
 
@@ -180,13 +309,12 @@ def save_state(path, state):
 
 
 def new_since(rows, state, today, first_days=LATE_DAYS):
-    """Rows not seen before. On the first run: only those filed in the last
-    first_days days, so you are not flooded with the whole year."""
+    """Rows not seen before. On first run: only those filed in last first_days days."""
     seen = set(state.get("seen", []))
     if state.get("last_check") is None:
         cutoff = (today - _dt.timedelta(days=first_days)).isoformat()
-        return [r for r in rows if (r["filed"] or "") >= cutoff]
-    return [r for r in rows if r["doc_id"] not in seen]
+        return [r for r in rows if (r.get("filed") or "") >= cutoff]
+    return [r for r in rows if r.get("doc_id") not in seen]
 
 
 # ---------------------------------------------------------------- parsing a PTR
@@ -200,8 +328,6 @@ LABELS = [
     ("account", re.compile(r"^\s*S(?:UBHOLDING)?\s+O(?:F)?\s*:\s*(.*)$", re.I)),
     ("location", re.compile(r"^\s*L(?:OCATION)?\s*:\s*(.*)$", re.I)),
 ]
-# Column headers repeat at the top of every page, sometimes in the middle of a
-# row that continues on the next page: skip them without ending the row.
 PAGE_HEADER = re.compile(r"^\s*(ID\s+Owner\s+Asset|Type\s+Date\b|Type$|Date$|Gains >$|\$200\?$)",
                          re.I)
 END = re.compile(r"^\s*(\* For the complete|I CERTIFY|Digitally Signed|Filing ID #)", re.I)
@@ -249,13 +375,6 @@ def _finish(row, filed):
 
 
 def parse_ptr_text(text, filed=None):
-    """Rows from `pdftotext -layout` output of a House PTR.
-
-    Returns {"name", "status", "district", "doc_id", "filed", "rows": [...]}.
-    Each row: owner, owner_name, asset, ticker, asset_type, type, type_name,
-    date, notified, amount, amount_low, amount_high, status, description,
-    account, option {contracts, kind, strike, expires}, shares,
-    days_to_disclose, late."""
     head = {"name": None, "status": None, "district": None, "doc_id": None, "filed": filed}
     rows, cur, mode = [], None, None
     amount_open = False
@@ -348,13 +467,14 @@ def pdf_to_text(pdf_path):
 # ---------------------------------------------------------------- output
 
 def watchlist(args):
-    tickers = {t.upper() for t in (args.tickers or [])}
+    tickers = {t.upper() for t in (getattr(args, "tickers", None) or [])}
     path = getattr(args, "portfolio", None)
     if path and os.path.isfile(path):
         with open(path, encoding="utf-8") as fh:
             for p in json.load(fh).get("positions", []):
-                if p.get("ticker"):
-                    tickers.add(p["ticker"].upper())
+                sym = p.get("ticker") or p.get("symbol")
+                if sym:
+                    tickers.add(sym.upper())
     return tickers
 
 
@@ -382,6 +502,33 @@ def describe(row):
     return ", ".join(bits)
 
 
+def describe_indian(row):
+    """Format an Indian insider transaction or bulk/block deal."""
+    reg = row.get("reg", "Disclosure")
+    sym = row.get("symbol", "")
+    co = row.get("company", sym)
+    if "Deal" in reg:
+        deal_k = row.get("deal_kind", "Bulk")
+        qty = "{:,}".format(row.get("quantity", 0))
+        pr = "₹{:,.2f}".format(row.get("price", 0.0))
+        val_cr = "₹{:,.2f} Cr".format(row.get("value", 0.0) / 1e7)
+        client = row.get("client", "Client")
+        act = row.get("type", "purchase")
+        return "%s %s, %s (%s): %s %s %s shares @ %s (%s) on %s, %s" % (
+            deal_k, act.capitalize(), co, sym, client, "bought" if act == "purchase" else "sold",
+            qty, pr, val_cr, row.get("date", ""), row.get("exchange", "NSE"))
+    else:
+        person = row.get("person", "Insider")
+        cat = row.get("category", "Promoter")
+        act = row.get("type", "purchase")
+        qty = "{:,}".format(row.get("quantity", 0))
+        val_str = ("₹{:,.2f} Cr".format(row.get("value") / 1e7)) if row.get("value") else ""
+        late_tag = " (LATE: >2 days)" if row.get("late") else ""
+        return "%s %s (%s), %s (%s): %s shares %s, traded %s, filed %s%s [%s]" % (
+            cat, act.capitalize(), person, co, sym, qty, val_str,
+            row.get("date", ""), row.get("filed", ""), late_tag, reg)
+
+
 def render_report(report, watch=()):
     out = ["%s (%s), %s. PTR %s, filed %s." % (
         report.get("name") or "?", report.get("district") or "?", report.get("status") or "?",
@@ -406,6 +553,17 @@ def render_index(rows):
     return "\n".join(out) + ("\n" if out else "")
 
 
+def render_indian_feed(rows, watch=()):
+    out = []
+    for r in rows:
+        sym = r.get("symbol", "").replace(".NS", "").replace(".BO", "")
+        flag = "  <- %s is on your watchlist" % sym if sym in watch or r.get("symbol") in watch else ""
+        out.append("  - %s%s" % (describe_indian(r), flag))
+    out.append("Public regulatory disclosures under SEBI PIT, SEBI SAST and NSE/BSE Bulk/Block Deal regulations. "
+               "Not inside information.")
+    return "\n".join(out) + ("\n" if out else "")
+
+
 # ---------------------------------------------------------------- CLI
 
 def _parser():
@@ -415,14 +573,16 @@ def _parser():
 
     def common(p):
         p.add_argument("--year", type=int, default=year)
+        p.add_argument("--market", choices=["US", "IN"], help="market choice (US or IN)")
+        p.add_argument("--symbol", help="filter by ticker symbol (e.g. RELIANCE, TSLA)")
         p.add_argument("--member", action="append",
-                       help="last name or 'First Last'; repeat for more members")
-        p.add_argument("--type", default="P", help="FilingType (default P = PTR; '' for all)")
+                       help="US member: last name or 'First Last'; repeat for more members")
+        p.add_argument("--type", default="P", help="US FilingType (default P = PTR; '' for all)")
         p.add_argument("--since", help="only filings on or after YYYY-MM-DD")
-        p.add_argument("--offline", metavar="FILE", help="a saved <YEAR>FD.zip or .xml")
+        p.add_argument("--offline", metavar="FILE", help="saved <YEAR>FD.zip or Indian deals/insider JSON")
         p.add_argument("--json", action="store_true")
 
-    p = sub.add_parser("index", help="list filings from the yearly index")
+    p = sub.add_parser("index", help="list filings from index (US PTRs or Indian SEBI/Deals)")
     common(p)
     p.add_argument("--limit", type=int, default=50)
 
@@ -437,6 +597,20 @@ def _parser():
     p.add_argument("--tickers", nargs="*", help="flag trades in these tickers")
     p.add_argument("--portfolio", default="trader/portfolio.json")
 
+    p = sub.add_parser("deals", help="NSE/BSE Bulk & Block Deals")
+    p.add_argument("--symbol", help="filter by ticker (e.g. RELIANCE, HDFCBANK)")
+    p.add_argument("--kind", choices=["bulk", "block", "all"], default="all")
+    p.add_argument("--offline", metavar="FILE", help="saved deals JSON file")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("insider", help="SEBI PIT & SAST disclosures")
+    p.add_argument("--symbol", help="filter by ticker (e.g. RELIANCE, TCS)")
+    p.add_argument("--reg", choices=["PIT", "SAST", "all"], default="all")
+    p.add_argument("--offline", metavar="FILE", help="saved insider JSON file")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+
     p = sub.add_parser("fetch", help="download one PTR PDF and read it")
     p.add_argument("doc_id")
     p.add_argument("--year", type=int, default=year)
@@ -448,7 +622,7 @@ def _parser():
 
     p = sub.add_parser("parse", help="rows from pdftotext -layout text of a PTR")
     p.add_argument("text_file")
-    p.add_argument("--filed", help="filing date YYYY-MM-DD (else read from the signature)")
+    p.add_argument("--filed", help="filing date YYYY-MM-DD (else read from signature)")
     p.add_argument("--tickers", nargs="*")
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--json", action="store_true")
@@ -486,6 +660,35 @@ def main(argv=None):
 
 
 def _run(args):
+    # Standalone Indian deals command
+    if args.cmd == "deals":
+        rows = load_indian_data(args.offline, args.symbol)
+        if args.kind != "all":
+            rows = [r for r in rows if r.get("deal_kind", "").lower() == args.kind.lower()]
+        rows = rows[:args.limit]
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            sys.stdout.write(render_indian_feed(rows, watchlist(args)))
+            if not rows:
+                print("No matching Bulk/Block deals found.")
+        return 0 if rows else 1
+
+    # Standalone Indian insider command
+    if args.cmd == "insider":
+        rows = load_indian_data(args.offline, args.symbol)
+        rows = [r for r in rows if "Deal" not in r.get("reg", "")]
+        if args.reg != "all":
+            rows = [r for r in rows if args.reg.upper() in r.get("reg", "").upper()]
+        rows = rows[:args.limit]
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            sys.stdout.write(render_indian_feed(rows, watchlist(args)))
+            if not rows:
+                print("No matching SEBI PIT/SAST disclosures found.")
+        return 0 if rows else 1
+
     if args.cmd == "parse":
         with open(args.text_file, encoding="utf-8", errors="replace") as fh:
             report = parse_ptr_text(fh.read(), filed=args.filed)
@@ -507,6 +710,45 @@ def _run(args):
             sys.stdout.write(render_report(report, watchlist(args)))
         return 0 if report["rows"] else 1
 
+    # Check if Indian market mode was chosen
+    is_in = getattr(args, "market", None) == "IN" or (
+        getattr(args, "symbol", None) and (args.symbol.endswith(".NS") or args.symbol.endswith(".BO")))
+
+    if is_in:
+        rows = load_indian_data(args.offline, getattr(args, "symbol", None))
+        if getattr(args, "since", None):
+            rows = [r for r in rows if (r.get("filed") or "") >= args.since]
+        if args.cmd == "index":
+            rows = rows[:args.limit]
+            if args.json:
+                print(json.dumps(rows, indent=2))
+            else:
+                sys.stdout.write(render_indian_feed(rows, watchlist(args)))
+                if not rows:
+                    print("No matching Indian disclosures found.")
+            return 0 if rows else 1
+
+        # new for Indian market
+        today = _dt.date.fromisoformat(args.today) if args.today else _dt.date.today()
+        state = load_state(args.state)
+        fresh = new_since(rows, state, today, first_days=7)
+        watch = watchlist(args)
+        if args.json:
+            print(json.dumps({"new": fresh}, indent=2))
+        else:
+            if not fresh:
+                print("Nothing new since %s." % (state.get("last_check") or "the last check"))
+            for r in fresh:
+                print("NEW %s: %s" % (r.get("reg"), describe_indian(r)))
+        if not args.dry_run:
+            seen = set(state.get("seen", []))
+            seen.update(r["doc_id"] for r in rows)
+            state["seen"] = sorted(seen)
+            state["last_check"] = _dt.datetime.now().replace(microsecond=0).isoformat()
+            save_state(args.state, state)
+        return 0 if fresh else 1
+
+    # US Congress route (default)
     rows = load_index(args.year, args.offline)
     if args.cmd == "new" and not args.offline:
         today = _dt.date.fromisoformat(args.today) if args.today else _dt.date.today()

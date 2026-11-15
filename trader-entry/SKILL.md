@@ -69,6 +69,12 @@ day bar by bar without waiting.
   opening auction, so 1.0 is already strict.
 - **Time limits.** No entries before 9:45 or after 15:30 (config). On a 1:00
   p.m. early close the cutoff moves up with the close, to 12:30.
+- **Indian market support (NSE/BSE).** Symbols ending in `.NS` or `.BO` (or with
+  `--market IN`) run on Indian market hours: regular session 09:15 to 15:30 IST
+  (Asia/Kolkata, UTC+05:30). The 15-minute opening range is 09:15 to 09:30 IST
+  (the 09:15, 09:20, and 09:25 five-minute bars). Default limits are
+  `no_entries_before` 09:30 and `no_entries_after` 15:15 IST (aligning with
+  broker MIS auto-square-off cutoffs). Currency is formatted as INR (₹).
 - **What it says.** Waiting (and how far the last close is from the level),
   triggered, expired, or no data. Before 9:30: not open yet. Before 9:45: the
   range is still forming. Weekends and NYSE holidays: the market is closed.

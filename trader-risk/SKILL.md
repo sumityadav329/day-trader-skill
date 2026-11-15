@@ -74,7 +74,10 @@ batch that is fine order by order but breaks a limit together is caught.
 | daily loss | (entries) the max losses at the stops of today's entries, plus this one, over `max_daily_loss_usd` |
 | trades | (entries) `max_trades_per_day` entries already placed today |
 | window | (entries) before `no_entries_before` or after `no_entries_after`, or the market is closed |
-| pdt | (entries, only with `pdt_guard` true) 3 day trades already in the last 5 business days |
+| circuit | (entries, Indian markets) entry/limit or target above upper circuit limit, entry/limit or stop below lower circuit limit, or stock locked at circuit band |
+| margin | (entries, Indian MIS) cash under SEBI peak margin upfront requirement (e.g. 20% minimum margin) |
+| tick size | (entries, Indian markets) prices not a multiple of NSE tick size 0.05 INR |
+| pdt | (entries, US markets only with `pdt_guard` true) 3 day trades already in the last 5 business days |
 | duplicate | (entries) the same symbol and side twice in one batch, or already placed today |
 | daily limit | (entries) `max_orders_per_day` orders already placed today |
 
@@ -96,7 +99,13 @@ How the numbers work:
   to be flat by the close). FINRA removed the $25,000 pattern-day-trader
   minimum (Regulatory Notice 26-10, effective June 4, 2026; firms may phase
   in until October 20, 2027), so some brokers still apply the old rule: turn
-  `pdt_guard` on if yours does.
+  `pdt_guard` on if yours does. In Indian markets (SEBI), PDT restrictions do
+  not apply.
+- **Indian Market Constraints**:
+  - **Daily Price Bands / Circuit Limits**: SEBI and Indian exchanges enforce strict daily circuit limits (2%, 5%, 10%, 20%). Orders with entry, limit price, or target above the upper circuit, or stop below lower circuit, or attempts to buy when locked at upper circuit, are blocked before reaching the exchange.
+  - **SEBI Peak Margin Compliance**: For Intraday MIS trades (`product: "I"` or `"MIS"`), upfront peak margin compliance is verified (default 20% margin for 5x leverage).
+  - **MIS Cutoff**: Broker auto-square off occurs between 15:15 and 15:25 IST; new MIS entries are blocked after the cutoff.
+  - **NSE Equities Tick Size**: All orders on NSE must adhere to the 0.05 INR tick size.
 
 Warnings do not block, but say them to the user: a LIVE account, a number
 sent as a number instead of a string, a stop that lives only in the plan and
