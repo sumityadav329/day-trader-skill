@@ -161,7 +161,7 @@ For Indian markets (NSE & BSE), `trader-broker` generates broker payloads format
 ```
 3. **Tool Permissions**: Set `upstox_place_order` (and `kite_place_order`) to **Needs approval** in Claude Desktop / Claude Code.
 4. **Order Parameters**:
-   - `instrument_token`: e.g. `NSE_EQ|INE002A01018` or `NSE_EQ|RELIANCE`.
+   - `instrument_token`: the ISIN key, e.g. `NSE_EQ|INE002A01018`. `NSE_EQ|RELIANCE` is rejected by Upstox; ticket.py resolves the key from Upstox's public instrument master and refuses an unknown symbol or a quantity over the exchange freeze limit.
    - `quantity`: Number of shares (integer).
    - `product`: `I` (Intraday / MIS) or `D` (Delivery / CNC).
    - `order_type`: `MARKET`, `LIMIT`, `SL` (Stop Loss Limit), `SL-M` (Stop Loss Market).
@@ -170,7 +170,7 @@ For Indian markets (NSE & BSE), `trader-broker` generates broker payloads format
    - `price`: Limit price (0.0 for MARKET orders).
    - `trigger_price`: Trigger price for `SL` / `SL-M` orders.
    - `is_amo`: After-market order flag (boolean).
-5. **Bracket / Protective Orders**: Indian exchanges do not provide native multi-leg bracket cancellation on regular equity orders. Upstox places the entry order; after fill, stop-loss and take-profit targets are set via GTT (Good-Till-Triggered) or OCO orders.
+5. **Bracket / Protective Orders**: a plain Upstox order carries no stop. `ticket.py show` therefore prints the entry **and a second SELL `SL-M` order** at the plan's stop. Once the entry fills, Claude places that second order (its own yes) or the position has no stop at the broker. The take-profit is not sent; place it as a separate SELL LIMIT if wanted. MARKET and SL-M orders carry `market_protection` (default 2 %, `market_protection` in config). Confirm SL-M is accepted on your Upstox sandbox before relying on it live.
 6. **Intraday Square-off**: Intraday MIS (`I`) orders auto-square off by broker RMS around 15:15–15:25 IST. The flatten workflow (`ticket.py flatten`) defaults to `15:15 IST` for Indian markets.
 
 ## Steps: the entry
@@ -254,15 +254,15 @@ ORDER 1 of 1, PAPER account, Upstox
       "validity": "DAY",
       "price": 2500.0,
       "tag": "trading-skill",
-      "instrument_token": "NSE_EQ|RELIANCE",
+      "instrument_token": "NSE_EQ|INE002A01018",
       "order_type": "LIMIT",
       "transaction_type": "BUY",
       "disclosed_quantity": 0,
       "trigger_price": 0.0,
       "is_amo": false
     }
-  Upstox places the entry order. In paper mode or once filled, set the bracket
-  stop-loss and take-profit targets via GTT / OCO orders.
+  NO STOP is attached to the order above: after it fills, the ticket shows a second
+  SELL SL-M order at the stop that Claude must place (its own yes).
 ```
 
 ## What it never does

@@ -62,7 +62,7 @@ If `trader/config.json` does not exist, copy `config.example.json` into
 - **blocked**: tickers they never want to trade.
 - Keep **paper** true until they have watched it work on a paper account.
 
-For Indian market trading with Upstox or Zerodha, copy `config.upstox.example.json` instead, which configures INR currency (`₹`), NSE equity tick size (0.05 INR), Indian market session times (09:15–15:30 IST), intraday MIS square-off cutoff (15:15 IST), and Upstox broker settings.
+For Indian market trading with Upstox or Zerodha, copy `config.upstox.example.json` instead, which configures INR currency (`₹`), a fallback tick size (the real per-stock tick is read from the Upstox instrument master and wins), Indian market session times (09:15–15:30 IST), intraday MIS square-off cutoff (15:15 IST), and Upstox broker settings.
 
 ## Step 2: size the trade
 

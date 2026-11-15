@@ -1053,7 +1053,7 @@ def main(argv=None):
         p.add_argument("--level", type=float, help="the price to close above (--setup level)")
         p.add_argument("--min-volume-x", type=float, help="trigger bar volume vs the range bars' average")
         p.add_argument("--side", default="buy", choices=["buy", "long", "sell", "short"], help="v2: buy only")
-        p.add_argument("--now", help='pretend it is this New York time, e.g. "2026-10-19 10:15"')
+        p.add_argument("--now", help='pretend it is this market time (IST for NSE/BSE, New York for US), e.g. "2026-10-19 10:15"')
         p.add_argument("--offline", metavar="PATH", help="saved Yahoo chart JSON (.json/.json.gz) or a folder")
         p.add_argument("--config", default="trader/config.json")
         p.add_argument("--market", choices=["US", "IN"], help="market calendar/session (default auto-detected from symbol)")

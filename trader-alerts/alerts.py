@@ -907,7 +907,7 @@ def main(argv=None):
     p.add_argument("--label", help="what a time alert says, e.g. \"flat by close\"")
     p.add_argument("--before-close", action="store_true",
                    help="a time alert that moves 3 hours earlier on a 1:00 p.m. early close")
-    p.add_argument("--date", help="watch this rule on this New York date only (YYYY-MM-DD)")
+    p.add_argument("--date", help="watch this rule on this market date only (YYYY-MM-DD)")
     p.add_argument("--direction", choices=["up", "down"])
     p.add_argument("--rearm", action="store_true")
     p.add_argument("--note")

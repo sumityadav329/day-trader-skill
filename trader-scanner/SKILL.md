@@ -68,8 +68,8 @@ For Indian markets, `universe --preset PRESET` builds clean universes:
 - `niftybank`: 12 banking institutions driving Indian financial markets.
 - `niftynext50`: 50 next large-cap companies.
 - `nifty100`: Nifty 50 and Nifty Next 50 combined.
-- `nifty500`: Top 500 companies by market capitalization.
-- `fno`: Liquid NSE Futures and Options universe.
+- `nifty500`: **not a real Nifty 500**: only the bundled Nifty 100 (100 names), and it warns. Use `--universe FILE` for the full list.
+- `fno`: every stock with futures today (about 218), read live from Upstox's public instrument master; falls back to an incomplete bundled list with a warning.
 
 Indian symbols are normalized with `.NS` for NSE (e.g. `RELIANCE.NS`, `TCS.NS`,
 `HDFCBANK.NS`) and `.BO` for BSE. Index symbols like `NIFTY50` map to `^NSEI` and

@@ -599,8 +599,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
             for k in ("limit_price", "stop_price", "take_profit_limit_price", "stop_loss_stop_price", "stop_loss_limit_price", "trigger_price", "price"):
                 if o.get(k) is not None:
                     v_p = _f(o.get(k))
-                    if v_p is not None and v_p > 0 and abs(round(v_p / 0.05) * 0.05 - v_p) > 1e-4:
-                        reasons.append("format: %s %s is not a multiple of the NSE tick size 0.05 INR" % (k, o.get(k)))
+                    tk = _f(o.get("tick_size")) or _f((plan or {}).get("tick_size")) or 0.05  # real tick rides on the order
+                    if v_p is not None and v_p > 0 and tk > 0 and abs(round(v_p / tk) * tk - v_p) > 1e-4:
+                        reasons.append("format: %s %s is not a multiple of this stock's tick size %s INR" % (k, o.get(k), tk))
 
         # asset
         if sym and OCC.match(sym.replace(" ", "")):

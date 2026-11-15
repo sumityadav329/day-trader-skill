@@ -432,6 +432,45 @@ def is_indian_symbol(sym):
     return False
 
 
+
+def live_fno_symbols(cache_dir="trader"):
+    """Stocks with futures right now, from Upstox's public instrument master (the same cached file
+    trader-broker uses). None if it can't be read."""
+    import gzip
+    import time
+    import urllib.request
+    cache = os.path.join(cache_dir, "instruments-NSE.json.gz")
+    try:
+        if not (os.path.isfile(cache) and time.time() - os.path.getmtime(cache) < 86400):
+            url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "trader-skill"}), timeout=60) as r:
+                blob = r.read()
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(cache, "wb") as fh:
+                fh.write(blob)
+        with gzip.open(cache, "rt", encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except Exception:
+        return None
+    names = {s: n for s, n in INDIAN_NIFTY_50 + INDIAN_NIFTY_NEXT_50 + INDIAN_NIFTY_BANK}
+    und = sorted({x["underlying_symbol"] for x in rows
+                  if x.get("segment") == "NSE_FO" and x.get("instrument_type") == "FUT" and x.get("underlying_type") == "EQUITY"})
+    return [(u + ".NS", names.get(u + ".NS", u)) for u in und] or None
+
+
+def preset_list(p_name):
+    """Preset -> [(symbol, name)]. fno is live; nifty500 is not a real Nifty 500 list, and says so."""
+    if p_name == "fno":
+        live = live_fno_symbols()
+        if live:
+            return live
+        print("scan: could not read the live F&O list; using the bundled approximation (incomplete).", file=sys.stderr)
+    if p_name == "nifty500":
+        print("scan: the nifty500 preset is only the bundled Nifty 100 (100 names), not the full Nifty 500. "
+              "Use --universe FILE for the full list.", file=sys.stderr)
+    return INDIAN_PRESETS.get(p_name)
+
+
 def detect_market(symbols=None, preset=None, config=None, explicit_market=None):
     """Detect whether scanning US or Indian market."""
     if explicit_market:
@@ -1036,7 +1075,7 @@ def read_symbols(a, offline_syms=None):
         syms = [s for s in re.split(r"[,\s]+", a.symbols.upper()) if s]
     elif getattr(a, "preset", None):
         p_name = a.preset.lower().replace("-", "").replace("_", "")
-        preset_items = INDIAN_PRESETS.get(p_name)
+        preset_items = preset_list(p_name)
         if not preset_items:
             raise ScanError("unknown preset '%s'. Choices: %s" % (
                 a.preset, ", ".join(sorted(INDIAN_PRESETS.keys()))))
@@ -1114,7 +1153,7 @@ def cmd_universe(a):
     # Check if Indian market preset was requested
     if getattr(a, "preset", None) or getattr(a, "market", None) == "IN":
         p_name = (getattr(a, "preset", None) or "nifty50").lower().replace("-", "").replace("_", "")
-        preset_items = INDIAN_PRESETS.get(p_name)
+        preset_items = preset_list(p_name)
         if not preset_items:
             raise ScanError("unknown preset '%s'. Available: %s" % (
                 p_name, ", ".join(sorted(INDIAN_PRESETS.keys()))))

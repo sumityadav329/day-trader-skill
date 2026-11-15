@@ -257,6 +257,10 @@ def parse_sebi_insider(data_or_text):
     return out
 
 
+NO_LIVE_IN = ("There is no live feed for this: NSE blocks scripted requests, so nothing was fetched. "
+              "This is not 'no deals'. Download the report from %s and pass it with --offline FILE.")
+
+
 def load_indian_data(offline=None, ticker=None):
     """Load Indian regulatory disclosures from offline fixtures or live endpoints."""
     out = []
@@ -267,8 +271,8 @@ def load_indian_data(offline=None, ticker=None):
                     raw = fh.read()
                 out += parse_indian_deals(raw)
                 out += parse_sebi_insider(raw)
-            except Exception:
-                pass
+            except Exception as exc:
+                raise PtrError("could not read %s: %s" % (offline, exc))
         elif os.path.isdir(offline):
             for fname in os.listdir(offline):
                 p = os.path.join(offline, fname)
@@ -671,8 +675,9 @@ def _run(args):
         else:
             sys.stdout.write(render_indian_feed(rows, watchlist(args)))
             if not rows:
-                print("No matching Bulk/Block deals found.")
-        return 0 if rows else 1
+                print("No matching Bulk/Block deals found." if args.offline else
+                      NO_LIVE_IN % "https://www.nseindia.com/report-detail/display-bulk-and-block-deals", file=sys.stderr if not args.offline else sys.stdout)
+        return 0 if rows else (1 if args.offline else 2)
 
     # Standalone Indian insider command
     if args.cmd == "insider":
@@ -686,8 +691,9 @@ def _run(args):
         else:
             sys.stdout.write(render_indian_feed(rows, watchlist(args)))
             if not rows:
-                print("No matching SEBI PIT/SAST disclosures found.")
-        return 0 if rows else 1
+                print("No matching SEBI PIT/SAST disclosures found." if args.offline else
+                      NO_LIVE_IN % "https://www.nseindia.com/companies-listing/corporate-filings-insider-trading", file=sys.stderr if not args.offline else sys.stdout)
+        return 0 if rows else (1 if args.offline else 2)
 
     if args.cmd == "parse":
         with open(args.text_file, encoding="utf-8", errors="replace") as fh:

@@ -11,7 +11,7 @@ checks the order and trader-broker asks you yes or no.
     python3 size.py --write                          # write trader/orders.json
     python3 size.py --limit                          # a limit order at the plan's entry
     python3 size.py --limit 364.00 --write           # a limit order at 364.00
-    python3 size.py --now "2026-10-19 10:15" --json  # pin the clock (New York time)
+    python3 size.py --now "2026-10-19 10:15" --json  # pin the clock (market time: IST for NSE, New York for US)
 
 How many shares. Whole shares only: Alpaca takes no fractions in a bracket.
 
@@ -316,6 +316,59 @@ def fresh_price(doc, sym, now_utc, minutes=FRESH_MINUTES):
     return p, t, -60 <= age <= minutes * 60
 
 
+# ---------------------------------------------------------------- Upstox instrument master (public, no login)
+
+def instrument_row(sym, exchange="NSE_EQ", cache_dir="trader"):
+    """Master row for a cash equity (ISIN instrument_key, tick_size in paise, lot_size, freeze_quantity),
+    or None when it can't be read. Cached a day; $TRADER_INSTRUMENTS reads a saved file (tests/offline).
+    # ponytail: same loader lives in trader-broker/ticket.py; each skill stays standalone."""
+    import gzip
+    import time
+    import urllib.request
+    exch = exchange.split("_")[0]
+    src = os.environ.get("TRADER_INSTRUMENTS")
+    cache = os.path.join(cache_dir, "instruments-%s.json.gz" % exch)
+    try:
+        if not src:
+            if not (os.path.isfile(cache) and time.time() - os.path.getmtime(cache) < 86400):
+                url = "https://assets.upstox.com/market-quote/instruments/exchange/%s.json.gz" % exch
+                with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "trader-skill"}), timeout=60) as r:
+                    blob = r.read()
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cache, "wb") as fh:
+                    fh.write(blob)
+            src = cache
+        with (gzip.open if src.endswith(".gz") else open)(src, "rt", encoding="utf-8") as fh:
+            rows = json.load(fh)
+    except Exception:
+        return None
+    clean = str(sym).upper().replace(".NS", "").replace(".BO", "")
+    for x in rows:
+        if x.get("segment") == exchange and str(x.get("trading_symbol", "")).upper() == clean:
+            return x
+    return None
+
+
+# ---------------------------------------------------------------- Indian intraday (MIS) costs
+
+# Defaults for Upstox equity intraday; rates change, so override with "charges" in config and
+# check the Upstox brokerage calculator before relying on the rupee figures.
+IN_CHARGES = {"brokerage_flat": 20.0, "brokerage_pct": 0.1, "stt_sell_pct": 0.025, "txn_pct": 0.00297,
+              "sebi_pct": 0.0001, "stamp_buy_pct": 0.003, "gst_pct": 18.0}
+
+
+def india_intraday_costs(buy, sell, qty, charges=None):
+    """Round-trip cost in INR of buying at `buy` and selling at `sell` (qty shares, MIS)."""
+    c = dict(IN_CHARGES, **(charges or {}))
+    bv, sv = buy * qty, sell * qty
+    brok = min(c["brokerage_flat"], c["brokerage_pct"] / 100 * bv) + min(c["brokerage_flat"], c["brokerage_pct"] / 100 * sv)
+    txn = c["txn_pct"] / 100 * (bv + sv)
+    sebi = c["sebi_pct"] / 100 * (bv + sv)
+    gst = c["gst_pct"] / 100 * (brok + txn + sebi)
+    total = brok + c["stt_sell_pct"] / 100 * sv + txn + sebi + c["stamp_buy_pct"] / 100 * bv + gst
+    return round(total, 2)
+
+
 # ---------------------------------------------------------------- money helpers
 
 def round_tick(x, tick=0.01):
@@ -384,7 +437,9 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
 
     is_in = is_indian_market(c, plan, sym)
     currency = "INR" if is_in else "USD"
-    tick = float(c.get("tick_size") or (0.05 if is_in else 0.01))
+    inst = instrument_row(sym, "BSE_EQ" if ".BO" in sym else "NSE_EQ") if is_in else None
+    # the instrument's own tick (paise in the master) beats any config value: NSE ticks are 0.05 or 0.10 or more
+    tick = (float(inst["tick_size"]) / 100.0) if inst and inst.get("tick_size") else float(c.get("tick_size") or (0.05 if is_in else 0.01))
     exchange = plan.get("exchange") or c.get("exchange") or ("BSE_EQ" if ".BO" in sym else ("NSE_EQ" if is_in else None))
     product = plan.get("product") or c.get("product") or ("I" if is_in else None)
 
@@ -486,6 +541,10 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         "cost": cost, "max_loss": loss, "flat_by": flat_by,
         "order_type": "limit" if limit is not None else "market", "refusal": refusal,
         "currency": currency, "tick_size": tick, "is_indian": is_in,
+        "costs": ({"at_target": india_intraday_costs(ref, target, qty, c.get("charges")),
+                   "at_stop": india_intraday_costs(ref, stop, qty, c.get("charges"))} if is_in and qty else None),
+        "instrument_key": (inst or {}).get("instrument_key"), "lot_size": (inst or {}).get("lot_size"),
+        "freeze_quantity": (inst or {}).get("freeze_quantity"),
     }
     if is_in:
         ret["exchange"] = exchange
@@ -522,8 +581,9 @@ def bracket_order(s):
         o["exchange"] = s.get("exchange", "NSE_EQ")
         o["product"] = s.get("product", "I")
         o["currency"] = "INR"
-        clean_sym = s["symbol"].replace(".NS", "").replace(".BO", "")
-        o["instrument_token"] = f"{o['exchange']}|{clean_sym}"
+        if s.get("instrument_key"):  # ISIN key; NSE_EQ|SYMBOL is rejected by Upstox. trader-broker resolves it if absent.
+            o["instrument_token"] = s["instrument_key"]
+        o["tick_size"] = s.get("tick_size")
     return o
 
 
@@ -537,6 +597,14 @@ def plan_report(s, order, notes=()):
     lines.append("Stop %s%s. Target %s%s." % (_price(s["stop"], tick), (": " + s["stop_label"]) if s["stop_label"] else "",
                                              _price(s["target"], tick),
                                              (": " + s["target_label"]) if s["target_label"] else ""))
+    if s.get("costs"):
+        k, q = s["costs"], int(s["qty"])
+        gross_w, gross_l = (s["target"] - s["entry"]) * q, (s["entry"] - s["stop"]) * q
+        lines.append("Costs (brokerage, STT, GST, fees; check Upstox's calculator): about %s if the target hits, %s at the stop."
+                     % (money(k["at_target"], currency), money(k["at_stop"], currency)))
+        lines.append("Net of costs: win %s, loss %s, reward:risk %.2f (gross %.2f)."
+                     % (money(gross_w - k["at_target"], currency), money(gross_l + k["at_stop"], currency),
+                        (gross_w - k["at_target"]) / (gross_l + k["at_stop"]), gross_w / gross_l if gross_l else 0))
     for n in notes:
         lines.append(n)
     src = {"plan": "the plan's entry", "price": "the latest price, above the plan's entry",
@@ -947,7 +1015,7 @@ def main(argv=None):
     ap.add_argument("--prices", help="prices JSON (default trader/prices.json if it exists)")
     ap.add_argument("--portfolio", default="trader/portfolio.json",
                     help="your account; its cash caps the size if it exists")
-    ap.add_argument("--now", help="pretend it is this New York time, e.g. \"2026-10-19 10:15\"")
+    ap.add_argument("--now", help="pretend it is this market time (IST for NSE/BSE, New York for US), e.g. \"2026-10-19 10:15\"")
     ap.add_argument("--write", nargs="?", const="trader/orders.json", metavar="PATH",
                     help="write the proposed order (default trader/orders.json)")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the report")

@@ -232,6 +232,55 @@ def _f(x):
         return None
 
 
+INSTRUMENT_URL = "https://assets.upstox.com/market-quote/instruments/exchange/%s.json.gz"
+_MASTER = {}
+
+
+def load_instrument_master(exchange="NSE", path=None, cache_dir="trader", max_age_h=24):
+    """{TRADING_SYMBOL: row} for the exchange's cash equities, from Upstox's public instrument master
+    (no login). Cached for a day; `path` (or $TRADER_INSTRUMENTS) reads a saved file instead (offline/tests)."""
+    import gzip
+    import time
+    import urllib.request
+    path = path or os.environ.get("TRADER_INSTRUMENTS")
+    key = (exchange, path)
+    if key in _MASTER:
+        return _MASTER[key]
+    cache = os.path.join(cache_dir, "instruments-%s.json.gz" % exchange)
+    if path:
+        src = path
+    elif os.path.isfile(cache) and time.time() - os.path.getmtime(cache) < max_age_h * 3600:
+        src = cache
+    else:
+        try:
+            req = urllib.request.Request(INSTRUMENT_URL % exchange, headers={"User-Agent": "trader-skill"})
+            with urllib.request.urlopen(req, timeout=60) as r:
+                blob = r.read()
+        except Exception as exc:
+            raise TicketError("could not download the Upstox instrument list (%s). Set TRADER_INSTRUMENTS to a "
+                              "saved file, or put the instrument_token in the order" % exc)
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(cache, "wb") as fh:
+            fh.write(blob)
+        src = cache
+    opener = gzip.open if src.endswith(".gz") else open
+    with opener(src, "rt", encoding="utf-8") as fh:
+        rows = json.load(fh)
+    seg = "%s_EQ" % exchange
+    _MASTER[key] = {str(x.get("trading_symbol", "")).upper(): x for x in rows
+                    if x.get("segment") == seg and x.get("instrument_type") in ("EQ", "BE", "SM", None)}
+    return _MASTER[key]
+
+
+def resolve_upstox_instrument(symbol, exchange="NSE_EQ", path=None):
+    """Bare/.NS symbol -> master row (ISIN-based instrument_key, tick_size in paise, lot and freeze qty)."""
+    clean = str(symbol).strip().upper().replace(".NS", "").replace(".BO", "")
+    row = load_instrument_master(exchange.split("_")[0], path=path).get(clean)
+    if not row:
+        raise TicketError("%s is not a tradable %s equity in the Upstox instrument list: no ticket" % (clean, exchange))
+    return row
+
+
 def upstox_tool_input(order, cfg=None):
     """Exact arguments for upstox_place_order following Upstox API v2 conventions."""
     cfg = cfg or {}
@@ -261,9 +310,16 @@ def upstox_tool_input(order, cfg=None):
     if order_type in ("SL", "SL-M"):
         trigger_price = float(order.get("trigger_price") or order.get("stop_price") or order.get("stop_loss_stop_price") or 0.0)
 
-    token = order.get("instrument_token") or f"{exchange}|{clean_sym}"
+    token = order.get("instrument_token")
+    if not (token and re.search(r"\|IN[EF][0-9A-Z]{9}$", str(token))):  # a NSE_EQ|SYMBOL token is a rejected key
+        # Upstox keys are ISIN based (NSE_EQ|INE002A01018); NSE_EQ|RELIANCE is rejected
+        row = resolve_upstox_instrument(clean_sym, exchange)
+        token = row["instrument_key"]
+        freeze = _f(row.get("freeze_quantity"))
+        if freeze and qty > freeze:
+            raise TicketError("%s: quantity %d is over the exchange freeze limit %d per order" % (clean_sym, qty, freeze))
 
-    return {
+    out = {
         "quantity": qty,
         "product": product,
         "validity": validity,
@@ -276,6 +332,20 @@ def upstox_tool_input(order, cfg=None):
         "trigger_price": trigger_price,
         "is_amo": bool(order.get("is_amo", False)),
     }
+    if order_type in ("MARKET", "SL-M"):
+        out["market_protection"] = float(cfg.get("market_protection") or 2)  # % band so it cannot fill at a wild price
+    return out
+
+
+def upstox_stop_input(order, cfg=None):
+    """The protective stop as its own order (a plain Upstox order cannot carry one): SELL SL-M at the stop,
+    same product and instrument. Place it only after the entry fills. None if the order has no stop."""
+    stop = _f(order.get("stop_loss_stop_price")) or _f((order.get("plan") or {}).get("stop"))
+    if not stop:
+        return None
+    base = upstox_tool_input(dict(order, order_type="MARKET", side="BUY"), cfg)
+    return dict(base, transaction_type="SELL", order_type="SL-M", trigger_price=stop, price=0.0,
+                tag=(order.get("tag") or "trading-skill") + "-stop")
 
 
 def kite_tool_input(order, cfg=None):
@@ -546,8 +616,15 @@ def render(order, idx, total, cfg, risk, state, today):
         for l in json.dumps(tool_input(order, cfg), indent=2).splitlines():
             lines.append("    " + l)
         if is_bracket(order):
-            lines.append("  Upstox places the entry order. In paper mode or once filled, set the bracket")
-            lines.append("  stop-loss and take-profit targets via GTT / OCO orders.")
+            stop_in = upstox_stop_input(order, cfg)
+            if stop_in:
+                lines.append("  NO STOP is attached to the order above. Right after it fills, Claude must place this")
+                lines.append("  second order (its own yes), or you are unprotected:")
+                for l in json.dumps(stop_in, indent=2).splitlines():
+                    lines.append("    " + l)
+            if order.get("take_profit_limit_price"):
+                lines.append("  Take-profit %s is not sent either: place it as a separate SELL LIMIT if you want it."
+                             % order["take_profit_limit_price"])
     elif broker in ("zerodha", "kite"):
         lines.append("  Claude will call kite_place_order with exactly:")
         for l in json.dumps(tool_input(order, cfg), indent=2).splitlines():
@@ -880,8 +957,8 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd")
 
     def clock(p):
-        p.add_argument("--now", help="pretend it is this New York time, e.g. \"2026-10-19 10:15\"")
-        p.add_argument("--today", help="YYYY-MM-DD (default: today in New York)")
+        p.add_argument("--now", help="pretend it is this market time (IST for NSE/BSE, New York for US), e.g. \"2026-10-19 10:15\"")
+        p.add_argument("--today", help="YYYY-MM-DD (default: today in the market's timezone)")
 
     def common(p):
         p.add_argument("--orders", default="trader/orders.json")
@@ -916,7 +993,7 @@ def main(argv=None):
     p.add_argument("--side", required=True, choices=["buy", "sell"])
     p.add_argument("--qty", required=True)
     p.add_argument("--price", required=True)
-    p.add_argument("--date", help="YYYY-MM-DD (default: today in New York)")
+    p.add_argument("--date", help="YYYY-MM-DD (default: today in the market's timezone)")
     p.add_argument("--now")
     p.add_argument("--portfolio", default="trader/portfolio.json")
     p.add_argument("--config", default="trader/config.json")

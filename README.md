@@ -26,7 +26,7 @@ an order on its own. Paper trading is the default.
 Paste this into Claude:
 
 ```
-https://github.com/Jakeschincariol/day-trader-skill
+https://github.com/sumityadav329/day-trader-skill
 
 install skill
 ```
@@ -34,7 +34,7 @@ install skill
 Or as a plugin, in Claude Code:
 
 ```
-/plugin marketplace add Jakeschincariol/day-trader-skill
+/plugin marketplace add sumityadav329/day-trader-skill
 /plugin install day-trader-skill@day-trader-skill
 ```
 
@@ -43,7 +43,7 @@ Claude Code namespaces plugin skills, so installed as a plugin they show up as
 plain `/trader-scanner`:
 
 ```bash
-git clone https://github.com/Jakeschincariol/day-trader-skill.git
+git clone https://github.com/sumityadav329/day-trader-skill.git
 cp -r day-trader-skill/trader-* ~/.claude/skills/
 ```
 
@@ -254,3 +254,13 @@ tests/              unittest suite + offline fixtures
 ```
 
 MIT. Made by [Jake Schincariol](https://opusjake.ai).
+
+## Indian market: data sources and known limits
+
+Forked from [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincariol/day-trader-skill) (MIT) and extended for NSE/BSE and Upstox.
+
+- **Instruments:** ticket and sizing resolve ISIN keys, tick size, lot and freeze quantity from Upstox's public instrument master (cached in `trader/`). `NSE_EQ|SYMBOL` keys are rejected by Upstox and never emitted.
+- **Candles:** Yahoo 5-minute bars (free, can lag, a few NSE bars missing every day; the time machine forward-fills up to 4 holes). Replays end at the 15:15 MIS square-off.
+- **Costs:** sizing shows brokerage, STT, GST and fees with default rates (override `charges` in config; verify against Upstox's calculator).
+- **NSE MCP** (`mcp.nseindia.in`): daily history, live snapshot, corporate actions. No intraday candles, no orders; NSE says informational use only. Config is in `.mcp.json` one folder up (the Upstox project root), not in this repo; restart Claude Code to load it.
+- **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; `trader-pelosi` needs `--offline FILE` and says so), Indian financials in `trader-analyst` (Yahoo returns 401), a real Nifty 500 list.
