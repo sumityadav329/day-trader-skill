@@ -141,3 +141,10 @@ class StopAndProtection(unittest.TestCase):
 
     def test_no_stop_no_second_order(self):
         self.assertIsNone(ticket.upstox_stop_input({"symbol": "TCS", "qty": 1}, {}))
+
+
+class StopSide(unittest.TestCase):
+    def test_stop_is_opposite_of_entry_side(self):
+        for entry, stop_side in (("buy", "SELL"), ("sell", "BUY")):
+            o = {"symbol": "TCS", "qty": 1, "side": entry, "stop_loss_stop_price": "100"}
+            self.assertEqual(ticket.upstox_stop_input(o, {})["transaction_type"], stop_side)

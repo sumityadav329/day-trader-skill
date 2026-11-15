@@ -343,8 +343,12 @@ def upstox_stop_input(order, cfg=None):
     stop = _f(order.get("stop_loss_stop_price")) or _f((order.get("plan") or {}).get("stop"))
     if not stop:
         return None
-    base = upstox_tool_input(dict(order, order_type="MARKET", side="BUY"), cfg)
-    return dict(base, transaction_type="SELL", order_type="SL-M", trigger_price=stop, price=0.0,
+    entry = str(order.get("transaction_type") or order.get("side") or "BUY").upper()
+    if entry not in ("BUY", "SELL"):
+        return None
+    base = upstox_tool_input(dict(order, order_type="MARKET"), cfg)
+    # the stop closes the entry, so it is the opposite side (SELL for a long, BUY for a short)
+    return dict(base, transaction_type="SELL" if entry == "BUY" else "BUY", order_type="SL-M", trigger_price=stop, price=0.0,
                 tag=(order.get("tag") or "trading-skill") + "-stop")
 
 
