@@ -268,3 +268,11 @@ Forked from [Jakeschincariol/day-trader-skill](https://github.com/Jakeschincario
 - **Index lists:** Nifty 50/Bank/Next 50/100/500 come live from NSE's public CSVs; F&O from the Upstox master.
 - **Holidays:** `trader-entry` says when NSE is shut (calendar covers 2026–2027, from `trader-alerts`).
 - **Not available:** live NSE bulk/block deals and SEBI insider feeds (NSE blocks scripts; download NSE's deals CSV by hand and pass `--offline FILE`, `trader-pelosi` says so otherwise), Indian financials in `trader-analyst` (Yahoo returns 401; it now says where to read results).
+
+## First day on the real market (paper only)
+
+1. Log in to Upstox and export the fresh token (it expires about 03:30 IST daily): `set -a; . ../.env; set +a`. Without it everything still runs on public Yahoo data, with the weaker opening-range candles.
+2. 09:00: `python3 trader-scanner/scan.py daily --preset nifty100 --market IN` for the watchlist, then `trader-news` on the picks.
+3. After 09:30: `python3 trader-entry/entry.py check SYMBOL --market IN`. The first line must say `Upstox (live)`. Run once more with the token unset and compare the opening range: that is the Yahoo-versus-Upstox gap measured on a live session.
+4. On a trigger: `trader-exit`, `trader-timemachine`, `trader-budget` (check the net-of-costs line and the circuit band), `trader-risk`, then `trader-broker show`. Keep `paper: true` and `UPSTOX_ALLOW_LIVE_ORDERS` off. Read the entry and stop payloads; place nothing live.
+5. Note anything that disagrees with the Upstox app (price, tick, band, costs) and fix it before any real order.

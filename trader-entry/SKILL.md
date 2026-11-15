@@ -142,6 +142,13 @@ watch: nobody is there to say yes.
 
 Default is public Yahoo (free, can lag, and its NSE opening bars can differ from the exchange's). If `UPSTOX_ACCESS_TOKEN` is set in the environment, entry.py uses live Upstox candles instead and the first line says which source it used. Any Upstox failure falls back to Yahoo with a note on stderr. Nothing requires Upstox.
 
+## NSE MCP cross-checks (India, optional)
+
+When the NSE MCP tools are connected (`cm_get_stock_quote`, `get_corporate_actions`; see `.mcp.json`), call them before taking a trigger:
+- Compare `cm_get_stock_quote` with the last close entry.py reports. A gap of more than a few ticks means the candles are lagging, so wait for the next bar.
+- Call `get_corporate_actions` for the symbol. An ex-date, split or bonus today makes the opening range misleading.
+NSE MCP gives a snapshot, not intraday candles, and NSE says it is for information, not for placing trades. Skip this section when the tools are not connected.
+
 ## Safety
 
 - Education and tooling, not financial advice. A PASS is a rules check, not a recommendation.
